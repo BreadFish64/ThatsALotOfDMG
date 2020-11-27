@@ -1,0 +1,25 @@
+﻿set(MAIN_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
+function(CGB_ADD_DEFINITIONS tgt)
+target_compile_definitions(${tgt} PRIVATE IS_DEBUG=$<BOOL:$<CONFIG:Debug>>)
+target_include_directories(${tgt} PRIVATE ${MAIN_SOURCE_DIR})
+
+if (MSVC)
+    target_compile_options(${tgt} PRIVATE /W4 /WX /permissive-)
+    target_compile_options(${tgt} PRIVATE /FA)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(STATUS "Using Clang-Cl flags for target ${tgt}")
+        target_compile_options(${tgt} PRIVATE /clang:-Wno-error=unknown-attributes)
+    else()
+        message(STATUS "Using MSVC flags for target ${tgt}")
+    endif()
+else()
+    target_compile_options(${tgt} PRIVATE -Wall -Wextra -pedantic -Werror -Wno-error=unknown-attributes)
+    message(STATUS "Using GNU flags for target ${tgt}")
+endif()
+
+endfunction()
+
+add_subdirectory(common)
+add_subdirectory(core)
+add_subdirectory(frontend)
