@@ -63,6 +63,9 @@ class Interpreter {
         "NC",
         "C",
     };
+    static constexpr std::array<std::string_view, 8> ALU_OP_NAME{
+        "ADD", "ADC", "SUB", "SBC", "AND", "XOR", "OR", "CP",
+    };
 
     u8 Load(GADDR addr) {
         u8 val = bus->Read(addr, timestamp);
@@ -189,14 +192,93 @@ class Interpreter {
     u8 PopByte() { return Load(SP++); }
     u16 PopWord() { return (u16{PopByte()} << 8) | PopByte(); }
 
+    void ADD(u8 rhs) {
+        u8 lhs = r8.A;
+        flag.H = ((lhs & 0x0F) + (rhs & 0x0F)) & 0x10;
+        u8 result;
+        flag.C = __builtin_add_overflow(lhs, rhs, &result);
+        flag.Z = result == 0;
+        flag.N = false;
+        r8.A = result;
+    }
+    void ADC(u8 rhs) {
+        u8 lhs = r8.A;
+        flag.H = __builtin_addcb(lhs & 0x0F, rhs & 0x0F, flag.C, nullptr) & 0x10;
+        u8 carry;
+        u8 result = __builtin_addcb(lhs, rhs, flag.C, &carry);
+        flag.C = carry;
+        flag.Z = result == 0;
+        flag.N = false;
+        r8.A = result;
+    }
+    void SUB(u8 rhs) {
+        u8 lhs = r8.A;
+        flag.H = static_cast<s8>((lhs & 0x0F) - (rhs & 0x0F)) < 0;
+        u8 result;
+        flag.C = __builtin_sub_overflow(lhs, rhs, &result);
+        flag.Z = result == 0;
+        flag.N = true;
+        r8.A = result;
+    }
+    void SBC(u8 rhs) {
+        u8 lhs = r8.A;
+        flag.H = static_cast<s8>(__builtin_subcb(lhs & 0x0F, rhs & 0x0F, flag.C, nullptr)) < 0;
+        u8 carry;
+        u8 result = __builtin_subcb(lhs, rhs, flag.C, &carry);
+        flag.C = carry;
+        flag.Z = result == 0;
+        flag.N = true;
+        r8.A = result;
+    }
+    void OR(u8 rhs) {
+        u8 lhs = r8.A;
+        u8 result = lhs | rhs;
+        flag.Z = result == 0;
+        flag.N = false;
+        flag.H = false;
+        flag.C = false;
+        r8.A = result;
+    }
+    void AND(u8 rhs) {
+        u8 lhs = r8.A;
+        u8 result = lhs & rhs;
+        flag.Z = result == 0;
+        flag.N = false;
+        flag.H = true;
+        flag.C = false;
+        r8.A = result;
+    }
+    void XOR(u8 rhs) {
+        u8 lhs = r8.A;
+        u8 result = lhs ^ rhs;
+        flag.Z = result == 0;
+        flag.N = false;
+        flag.H = false;
+        flag.C = false;
+        r8.A = result;
+    }
+    void CP(u8 rhs) {
+        u8 lhs = r8.A;
+        flag.H = static_cast<s8>((lhs & 0x0F) - (rhs & 0x0F)) < 0;
+        u8 result;
+        flag.C = __builtin_sub_overflow(lhs, rhs, &result);
+        flag.Z = result == 0;
+        flag.N = true;
+    }
+
+    static constexpr std::array ALU_OPS{
+        &Interpreter::ADD, &Interpreter::ADC, &Interpreter::SUB, &Interpreter::SBC,
+        &Interpreter::AND, &Interpreter::XOR, &Interpreter::OR,  &Interpreter::CP,
+    };
+
     void UnimplementedOpcode() {
         LOG(Trace, "{:#06X} Unimplemented Opcode {:#010B}", PC, bus->Read(PC, timestamp));
     }
     void NOP() { LOG(Trace, "\t\t{:#06X} NOP", PC); }
-    void JR_u8() {
+    void JR_PCrel() {
         s8 offset = static_cast<s8>(Imm8());
         LOG(Trace, "\t\t{:#06X} JR\t{:#04X}", PC - 1, offset);
-        Jump(PC + offset);
+        Jump(PC + 1 + offset);
     }
     template <u8 condition>
     void JR_cond_PCrel() {
@@ -259,7 +341,7 @@ class Interpreter {
     template <u8 reg_idx>
     void LD_r8_u8() {
         u8 rhs = Imm8();
-        LOG(Trace, "\t{:#06X} LD\t{},\t{:#04X}", PC - 1, R8_NAME[reg_idx], rhs);
+        LOG(Trace, "\t\t{:#06X} LD\t{},\t{:#04X}", PC - 1, R8_NAME[reg_idx], rhs);
         WriteR8<reg_idx>(rhs);
     }
     template <u8 dst_idx, u8 src_idx>
@@ -268,10 +350,27 @@ class Interpreter {
         WriteR8<dst_idx>(val);
         LOG(Trace, "\t\t{:#06X} LD\t{},\t{}", PC, R8_NAME[dst_idx], R8_NAME[src_idx]);
     }
+    template <u8 operation, u8 reg_idx>
+    void ALU_A_r8() {
+        u8 rhs = ReadR8<reg_idx>();
+        (this->*ALU_OPS[operation])(rhs);
+        LOG(Trace, "\t\t{:#06X} {}\tA,\t{}", PC, ALU_OP_NAME[operation], R8_NAME[reg_idx]);
+    }
+    template <u8 rhs_idx>
+    void OR_A_r8() {
+        u8 rhs = ReadR8<rhs_idx>();
+        WriteR8<dst_idx>(val);
+        LOG(Trace, "\t\t{:#06X} LD\t{},\t{}", PC, R8_NAME[dst_idx], R8_NAME[src_idx]);
+    }
     void LDIO_u8addr_A() {
         u8 offset = Imm8();
         Store(0xFF00 + offset, r8.A);
         LOG(Trace, "\t{:#06X} LDIO\t[{:#04X}],\tA", PC, offset);
+    }
+    void LDIO_A_u8addr() {
+        u8 offset = Imm8();
+        r8.A = Load(0xFF00 + offset);
+        LOG(Trace, "\t{:#06X} LDIO\tA,\t[{:#04X}]", PC, offset);
     }
     template <u8 reg_idx>
     void POP_r16() {
@@ -288,10 +387,24 @@ class Interpreter {
         Store(addr, r8.A);
         LOG(Trace, "\t{:#06X} LD\t[{:#06X}],\tA", PC - 2, addr);
     }
+    void LD_A_u16addr() {
+        GADDR addr = Imm16();
+        r8.A = Load(addr);
+        LOG(Trace, "\t{:#06X} LD\tA,\t[{:#06X}]", PC - 2, addr);
+    }
     void JP_u16() {
         GADDR braddr = Imm16();
         LOG(Trace, "\t\t{:#06X} JP\t{:#06X}", PC - 2, braddr);
         Jump(braddr);
+    }
+    template <u8 condition>
+    void CALL_cond_u16() {
+        GADDR braddr = Imm16();
+        LOG(Trace, "\t{:#06X} CALL\t{},\t{:#06X}", PC - 2, CONDITION_NAME[condition], braddr);
+        if (CheckCondition<condition>()) {
+            PushWord(PC + 1);
+            Jump(braddr);
+        };
     }
     template <u8 reg_idx>
     void PUSH_r16() {
@@ -302,26 +415,18 @@ class Interpreter {
     void CALL_u16() {
         GADDR braddr = Imm16();
         PushWord(PC + 1);
-        LOG(Trace, "\t{:#06X} CALL\t{:#06X}", PC - 2, braddr);
+        LOG(Trace, "\t\t{:#06X} CALL\t{:#06X}", PC - 2, braddr);
         Jump(braddr);
     }
     void DI() {
         IME = false;
         LOG(Trace, "\t\t{:#06X} DI", PC);
     }
-    u8 ADC(u8 lhs, u8 rhs) {
-        flag.H = __builtin_addcb(lhs & 0x0F, rhs & 0x0F, flag.C, nullptr) & 0x10;
-        u8 carry;
-        u8 result = __builtin_addcb(lhs & 0x0F, rhs & 0x0F, flag.C, &carry);
-        flag.C = carry;
-        flag.Z = r8.A == 0;
-        flag.N = false;
-        return result;
-    }
-    void ADC_A_u8() {
+    template <u8 operation>
+    void ALU_A_u8() {
         u8 rhs = Imm8();
-        r8.A = ADC(r8.A, rhs);
-        LOG(Trace, "\t\t{:#06X} ADC A,\t{:#04X}", PC - 1, rhs);
+        (this->*ALU_OPS[operation])(rhs);
+        LOG(Trace, "\t\t{:#06X} {}\tA,\t{:#04X}", PC - 1, ALU_OP_NAME[operation], rhs);
     }
     using Opcode = decltype(&Interpreter::NOP);
 
@@ -350,7 +455,7 @@ class Interpreter {
         table[0b00000000] = &Interpreter::NOP;
         // table[0b00001000] = &Interpreter::LD_u16_SP;
         // table[0b00010000] = &Interpreter::STOP;
-        table[0b00011000] = &Interpreter::JR_u8;
+        table[0b00011000] = &Interpreter::JR_PCrel;
         TABLE_FILL(JR_cond_PCrel, 0b001'00'000, 3, 2);
         TABLE_FILL(LD_r16_u16, 0b00'00'0001, 4, 2);
         // TABLE_FILL(ADD_HL_r16, 0b00'00'1001, 4, 2);
@@ -363,43 +468,29 @@ class Interpreter {
         TABLE_FILL(LD_r8_u8, 0b00'000'110, 3, 3);
         DOUBLE_TABLE_FILL(LD_r8_r8, 0b01'000'000, 3, 3, 0, 3);
         table[0b01'110'110] = &Interpreter::UnimplementedOpcode; // HALT
-        // TABLE_FILL(ADD_A_r8, 0b10'000'000, 0, 3);
-        // TABLE_FILL(ADC_A_r8, 0b10'001'000, 0, 3);
-        // TABLE_FILL(SUB_A_r8, 0b10'010'000, 0, 3);
-        // TABLE_FILL(SBC_A_r8, 0b10'011'000, 0, 3);
-        // TABLE_FILL(AND_A_r8, 0b10'100'000, 0, 3);
-        // TABLE_FILL(XOR_A_r8, 0b10'101'000, 0, 3);
-        // TABLE_FILL(OR_A_r8, 0b10'110'000, 0, 3);
-        // TABLE_FILL(CP_A_r8, 0b10'111'000, 0, 3);
-        // TABLE_FILL(RET_cond, 0b110'00'000, 3, 2);
+        DOUBLE_TABLE_FILL(ALU_A_r8, 0b10'000'000, 3, 3, 0, 3);
         table[0b11100000] = &Interpreter::LDIO_u8addr_A;
         // table[0b11101000] = &Interpreter::ADD_SP_s8;
-        // table[0b11110000] = &Interpreter::LDIO_A_u8addr;
+        table[0b11110000] = &Interpreter::LDIO_A_u8addr;
         // table[0b11110000] = &Interpreter::LD_HL_SPrel;
         TABLE_FILL(POP_r16, 0b11'00'0001, 4, 2);
         table[0b11'00'1001] = &Interpreter::RET;
         // table[0b11'01'1001] = &Interpreter::RETI;
         // table[0b11'10'1001] = &Interpreter::JP_HL;
         // table[0b11'11'1001] = &Interpreter::LD_SP_HL;
-        // table[0b110'00'010] = &Interpreter::JP_cond;
+        // table[0b110'00'010] = &Interpreter::JP_cond_u16;
         // table[0b11100010] = &Interpreter::LDIO_Caddr_A
         table[0b11101010] = &Interpreter::LD_u16addr_A;
         // table[0b11110010] = &Interpreter::LDIO_A_Caddr
-        // table[0b11111010] = &Interpreter::LD_A_u16addr;
+        table[0b11111010] = &Interpreter::LD_A_u16addr;
         table[0b11'000'011] = &Interpreter::JP_u16;
         // table[0b11'001'011] = &Interpreter::CB;
         table[0b11'110'011] = &Interpreter::DI;
         // table[0b11'111'011] = &Interpreter::EI;
+        TABLE_FILL(CALL_cond_u16, 0b110'00'100, 3, 2);
         TABLE_FILL(PUSH_r16, 0b11'00'0101, 4, 2);
         table[0b11001101] = &Interpreter::CALL_u16;
-        // table[0b11'000'110] = &Interpreter::ADD_A_u8;
-        table[0b11'001'110] = &Interpreter::ADC_A_u8;
-        // table[0b11'010'110] = &Interpreter::SUB_A_u8;
-        // table[0b11'011'110] = &Interpreter::SBC_A_u8;
-        // table[0b11'100'110] = &Interpreter::AND_A_u8;
-        // table[0b11'101'110] = &Interpreter::XOR_A_u8;
-        // table[0b11'110'110] = &Interpreter::OR_A_u8;
-        // table[0b11'111'110] = &Interpreter::CP_A_u8;
+        TABLE_FILL(ALU_A_u8, 0b11'000'110, 3, 3);
         // TABLE_FILL(RST, 0b11'000'111, 3, 3);
 
 #undef TABLE_FILL
