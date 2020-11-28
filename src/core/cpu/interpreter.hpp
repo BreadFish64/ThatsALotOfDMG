@@ -9,27 +9,28 @@ class Interpreter {
     union {
         std::array<u8, 8> reg_arr;
         struct {
-            u8 B;
-            u8 C;
-            u8 D;
-            u8 E;
-            u8 H;
-            u8 L;
-            u8 HL;
-            u8 A;
-        } r8;
-        struct {
             u16 BC;
             u16 DE;
             u16 HL;
-            u16 FA;
+            u16 AF;
         } r16;
+        struct {
+            u8 C;
+            u8 B;
+            u8 E;
+            u8 D;
+            u8 L;
+            u8 H;
+            u8 A;
+            u8 F;
+        } r8;
     };
-    [[maybe_unused]] u16 SP;
+    u16 SP;
     u16 PC;
     struct {
         bool Z, N, H, C;
     } flag;
+    bool IME = true;
 
     u64 timestamp;
 
@@ -49,6 +50,12 @@ class Interpreter {
         "DE",
         "HL+",
         "HL-",
+    };
+    static constexpr std::array<std::string_view, 4> G3_R16_NAME{
+        "BC",
+        "DE",
+        "HL",
+        "AF",
     };
     static constexpr std::array<std::string_view, 4> CONDITION_NAME{
         "NZ",
@@ -72,26 +79,42 @@ class Interpreter {
 
     u16 Imm16() { return u16{Imm8()} | (u16{Imm8()} << 8); }
 
+    u8 PackFlags() {
+        u8 F{0};
+        F |= flag.Z << 7;
+        F |= flag.N << 6;
+        F |= flag.H << 5;
+        F |= flag.C << 4;
+        return F;
+    }
+
+    void UnpackFlags(u8 F) {
+        flag.Z = F & (1 << 7);
+        flag.N = F & (1 << 6);
+        flag.H = F & (1 << 5);
+        flag.C = F & (1 << 4);
+    }
+
     template <u8 reg_idx>
-    u8 FetchR8() {
+    u8 ReadR8() {
         if constexpr (reg_idx == 6) {
             return Load(r16.HL);
         } else {
-            return reg_arr[reg_idx];
+            return reg_arr[reg_idx ^ 1];
         }
     }
 
     template <u8 reg_idx>
-    void StoreR8(u8 val) {
+    void WriteR8(u8 val) {
         if constexpr (reg_idx == 6) {
             Store(r16.HL, val);
         } else {
-            reg_arr[reg_idx] = val;
+            reg_arr[reg_idx ^ 1] = val;
         }
     }
 
     template <u8 reg_idx>
-    u16 FetchG1R16() {
+    u16 ReadG1R16() {
         switch (reg_idx) {
         case 0: return r16.BC;
         case 1: return r16.DE;
@@ -101,7 +124,7 @@ class Interpreter {
     }
 
     template <u8 reg_idx>
-    void StoreG1R16(u16 val) {
+    void WriteG1R16(u16 val) {
         switch (reg_idx) {
         case 0: r16.BC = val; break;
         case 1: r16.DE = val; break;
@@ -111,7 +134,7 @@ class Interpreter {
     }
 
     template <u8 reg_idx>
-    u16 FetchG2R16() {
+    u16 ReadG2R16() {
         switch (reg_idx) {
         case 0: return r16.BC;
         case 1: return r16.DE;
@@ -131,85 +154,174 @@ class Interpreter {
         }
     }
 
+    template <u8 reg_idx>
+    u16 ReadG3R16() {
+        switch (reg_idx) {
+        case 0: return r16.BC;
+        case 1: return r16.DE;
+        case 2: return r16.HL;
+        case 3: return (u16{r8.A} << 8) | PackFlags();
+        }
+    }
+
+    template <u8 reg_idx>
+    void WriteG3R16(u16 val) {
+        switch (reg_idx) {
+        case 0: r16.BC = val; break;
+        case 1: r16.DE = val; break;
+        case 2: r16.HL = val; break;
+        case 3:
+            r8.A = val >> 8;
+            UnpackFlags(val);
+            break;
+        }
+    }
+
+    void Jump(GADDR braddr) {
+        timestamp += 4;
+        PC = braddr - 1;
+    }
+    void PushByte(u8 val) { Store(--SP, val); }
+    void PushWord(u16 val) {
+        PushByte(static_cast<u8>(val));
+        PushByte(static_cast<u8>(val >> 8));
+    }
+    u8 PopByte() { return Load(SP++); }
+    u16 PopWord() { return (u16{PopByte()} << 8) | PopByte(); }
+
     void UnimplementedOpcode() {
         LOG(Trace, "{:#06X} Unimplemented Opcode {:#010B}", PC, bus->Read(PC, timestamp));
     }
     void NOP() { LOG(Trace, "\t\t{:#06X} NOP", PC); }
-    template <u8 condition>
-    void JR_conditional_imm8() {
+    void JR_u8() {
         s8 offset = static_cast<s8>(Imm8());
-        LOG(Trace, "\t{:#06X} JR {},\t{:#04X}", PC - 1, CONDITION_NAME[condition], offset);
-        if (CheckCondition<condition>()) {
-            PC += offset;
-            timestamp += 4;
-        }
+        LOG(Trace, "\t\t{:#06X} JR\t{:#04X}", PC - 1, offset);
+        Jump(PC + offset);
+    }
+    template <u8 condition>
+    void JR_cond_PCrel() {
+        s8 offset = static_cast<s8>(Imm8());
+        LOG(Trace, "\t{:#06X} JR\t{},\t{:#04X}", PC - 1, CONDITION_NAME[condition], offset);
+        if (CheckCondition<condition>()) { Jump(PC + 1 + offset); }
     }
     template <u8 reg_idx>
-    void LD_r16_imm16() {
-        u16 rhs = Imm16();
-        LOG(Trace, "\t{:#06X} LD\t{},\t{:#06X}", PC - 2, G1_R16_NAME[reg_idx], rhs);
-        StoreG1R16<reg_idx>(rhs);
+    void LD_r16_u16() {
+        u16 imm = Imm16();
+        WriteG1R16<reg_idx>(imm);
+        LOG(Trace, "\t{:#06X} LD\t{},\t{:#06X}", PC - 2, G1_R16_NAME[reg_idx], imm);
     }
     template <u8 reg_idx>
     void LD_A_r16addr() {
+        GADDR addr = ReadG2R16<reg_idx>();
+        u8 val = Load(addr);
+        r8.A = val;
         LOG(Trace, "\t{:#06X} LD\tA,\t[{}]", PC, G2_R16_NAME[reg_idx]);
-        r8.A = Load(FetchG2R16<reg_idx>());
     }
     template <u8 reg_idx>
     void LD_r16addr_A() {
+        GADDR addr = ReadG2R16<reg_idx>();
+        u8 val = r8.A;
+        Store(addr, val);
         LOG(Trace, "\t{:#06X} LD\t[{}],\tA", PC, G2_R16_NAME[reg_idx]);
-        Store(FetchG2R16<reg_idx>(), r8.A);
+    }
+    template <u8 reg_idx>
+    void INC_r16() {
+        WriteG1R16<reg_idx>(ReadG1R16<reg_idx>() + 1);
+        timestamp += 4;
+        LOG(Trace, "\t\t{:#06X} INC\t{}", PC, G1_R16_NAME[reg_idx]);
+    }
+    template <u8 reg_idx>
+    void DEC_r16() {
+        WriteG1R16<reg_idx>(ReadG1R16<reg_idx>() - 1);
+        timestamp += 4;
+        LOG(Trace, "\t\t{:#06X} INC\t{}", PC, G1_R16_NAME[reg_idx]);
     }
     template <u8 reg_idx>
     void INC_r8() {
-        LOG(Trace, "\t\t{:#06X} INC {}", PC, R8_NAME[reg_idx]);
-        u8 val = FetchR8<reg_idx>();
+        u8 val = ReadR8<reg_idx>();
         flag.H = (val & 0x0F) == 0xF;
         ++val;
         flag.Z = val == 0;
         flag.N = false;
-        StoreR8<reg_idx>(val);
+        WriteR8<reg_idx>(val);
+        LOG(Trace, "\t\t{:#06X} INC\t{}", PC, R8_NAME[reg_idx]);
     }
     template <u8 reg_idx>
     void DEC_r8() {
-        LOG(Trace, "\t\t{:#06X} DEC {}", PC, R8_NAME[reg_idx]);
-        u8 val = FetchR8<reg_idx>();
-        // TODO: verify half-borrow behavior
+        u8 val = ReadR8<reg_idx>();
         flag.H = (val & 0x0F) == 0x00;
         --val;
         flag.Z = val == 0;
         flag.N = true;
-        StoreR8<reg_idx>(val);
+        WriteR8<reg_idx>(val);
+        LOG(Trace, "\t\t{:#06X} DEC\t{}", PC, R8_NAME[reg_idx]);
     }
     template <u8 reg_idx>
-    void LD_r8_imm8() {
+    void LD_r8_u8() {
         u8 rhs = Imm8();
         LOG(Trace, "\t{:#06X} LD\t{},\t{:#04X}", PC - 1, R8_NAME[reg_idx], rhs);
-        StoreR8<reg_idx>(rhs);
+        WriteR8<reg_idx>(rhs);
     }
     template <u8 dst_idx, u8 src_idx>
     void LD_r8_r8() {
+        u8 val = ReadR8<src_idx>();
+        WriteR8<dst_idx>(val);
         LOG(Trace, "\t\t{:#06X} LD\t{},\t{}", PC, R8_NAME[dst_idx], R8_NAME[src_idx]);
-        StoreR8<dst_idx>(FetchR8<src_idx>());
     }
-    void JP_imm16() {
+    void LDIO_u8addr_A() {
+        u8 offset = Imm8();
+        Store(0xFF00 + offset, r8.A);
+        LOG(Trace, "\t{:#06X} LDIO\t[{:#04X}],\tA", PC, offset);
+    }
+    template <u8 reg_idx>
+    void POP_r16() {
+        WriteG3R16<reg_idx>(PopWord());
+        LOG(Trace, "\t\t{:#06X} POP\t{}", PC, G3_R16_NAME[reg_idx]);
+    };
+    void RET() {
+        GADDR braddr = PopWord();
+        LOG(Trace, "\t\t{:#06X} RET", PC);
+        Jump(braddr);
+    }
+    void LD_u16addr_A() {
+        GADDR addr = Imm16();
+        Store(addr, r8.A);
+        LOG(Trace, "\t{:#06X} LD\t[{:#06X}],\tA", PC - 2, addr);
+    }
+    void JP_u16() {
         GADDR braddr = Imm16();
         LOG(Trace, "\t\t{:#06X} JP\t{:#06X}", PC - 2, braddr);
-        timestamp += 8;
-        PC = braddr - 1;
+        Jump(braddr);
     }
-    void ADC_A(u8 rhs) {
-        flag.H = __builtin_addcb(r8.A & 0x0F, rhs & 0x0F, flag.C, nullptr) & 0x10;
+    template <u8 reg_idx>
+    void PUSH_r16() {
+        PushWord(ReadG3R16<reg_idx>());
+        timestamp += 4;
+        LOG(Trace, "\t\t{:#06X} PUSH\t{}", PC, G3_R16_NAME[reg_idx]);
+    };
+    void CALL_u16() {
+        GADDR braddr = Imm16();
+        PushWord(PC + 1);
+        LOG(Trace, "\t{:#06X} CALL\t{:#06X}", PC - 2, braddr);
+        Jump(braddr);
+    }
+    void DI() {
+        IME = false;
+        LOG(Trace, "\t\t{:#06X} DI", PC);
+    }
+    u8 ADC(u8 lhs, u8 rhs) {
+        flag.H = __builtin_addcb(lhs & 0x0F, rhs & 0x0F, flag.C, nullptr) & 0x10;
         u8 carry;
-        r8.A = __builtin_addcb(r8.A & 0x0F, rhs & 0x0F, flag.C, &carry);
+        u8 result = __builtin_addcb(lhs & 0x0F, rhs & 0x0F, flag.C, &carry);
         flag.C = carry;
         flag.Z = r8.A == 0;
         flag.N = false;
+        return result;
     }
-    void ADC_A_imm8() {
+    void ADC_A_u8() {
         u8 rhs = Imm8();
+        r8.A = ADC(r8.A, rhs);
         LOG(Trace, "\t\t{:#06X} ADC A,\t{:#04X}", PC - 1, rhs);
-        ADC_A(rhs);
     }
     using Opcode = decltype(&Interpreter::NOP);
 
@@ -236,16 +348,59 @@ class Interpreter {
         std::array<Opcode, 256> table{};
         std::ranges::fill(table, &Interpreter::UnimplementedOpcode);
         table[0b00000000] = &Interpreter::NOP;
-        TABLE_FILL(JR_conditional_imm8, 0b001'00'000, 3, 2);
-        TABLE_FILL(LD_r16_imm16, 0b00'00'0001, 4, 2);
+        // table[0b00001000] = &Interpreter::LD_u16_SP;
+        // table[0b00010000] = &Interpreter::STOP;
+        table[0b00011000] = &Interpreter::JR_u8;
+        TABLE_FILL(JR_cond_PCrel, 0b001'00'000, 3, 2);
+        TABLE_FILL(LD_r16_u16, 0b00'00'0001, 4, 2);
+        // TABLE_FILL(ADD_HL_r16, 0b00'00'1001, 4, 2);
         TABLE_FILL(LD_r16addr_A, 0b00'00'0010, 4, 2);
         TABLE_FILL(LD_A_r16addr, 0b00'00'1010, 4, 2);
+        TABLE_FILL(INC_r16, 0b00'00'0011, 4, 2);
+        TABLE_FILL(DEC_r16, 0b00'00'1011, 4, 2);
         TABLE_FILL(INC_r8, 0b00'000'100, 3, 3);
         TABLE_FILL(DEC_r8, 0b00'000'101, 3, 3);
-        TABLE_FILL(LD_r8_imm8, 0b00'000'110, 3, 3);
+        TABLE_FILL(LD_r8_u8, 0b00'000'110, 3, 3);
         DOUBLE_TABLE_FILL(LD_r8_r8, 0b01'000'000, 3, 3, 0, 3);
-        table[0b11'000'011] = &Interpreter::JP_imm16;
-        table[0b11'001'110] = &Interpreter::ADC_A_imm8;
+        table[0b01'110'110] = &Interpreter::UnimplementedOpcode; // HALT
+        // TABLE_FILL(ADD_A_r8, 0b10'000'000, 0, 3);
+        // TABLE_FILL(ADC_A_r8, 0b10'001'000, 0, 3);
+        // TABLE_FILL(SUB_A_r8, 0b10'010'000, 0, 3);
+        // TABLE_FILL(SBC_A_r8, 0b10'011'000, 0, 3);
+        // TABLE_FILL(AND_A_r8, 0b10'100'000, 0, 3);
+        // TABLE_FILL(XOR_A_r8, 0b10'101'000, 0, 3);
+        // TABLE_FILL(OR_A_r8, 0b10'110'000, 0, 3);
+        // TABLE_FILL(CP_A_r8, 0b10'111'000, 0, 3);
+        // TABLE_FILL(RET_cond, 0b110'00'000, 3, 2);
+        table[0b11100000] = &Interpreter::LDIO_u8addr_A;
+        // table[0b11101000] = &Interpreter::ADD_SP_s8;
+        // table[0b11110000] = &Interpreter::LDIO_A_u8addr;
+        // table[0b11110000] = &Interpreter::LD_HL_SPrel;
+        TABLE_FILL(POP_r16, 0b11'00'0001, 4, 2);
+        table[0b11'00'1001] = &Interpreter::RET;
+        // table[0b11'01'1001] = &Interpreter::RETI;
+        // table[0b11'10'1001] = &Interpreter::JP_HL;
+        // table[0b11'11'1001] = &Interpreter::LD_SP_HL;
+        // table[0b110'00'010] = &Interpreter::JP_cond;
+        // table[0b11100010] = &Interpreter::LDIO_Caddr_A
+        table[0b11101010] = &Interpreter::LD_u16addr_A;
+        // table[0b11110010] = &Interpreter::LDIO_A_Caddr
+        // table[0b11111010] = &Interpreter::LD_A_u16addr;
+        table[0b11'000'011] = &Interpreter::JP_u16;
+        // table[0b11'001'011] = &Interpreter::CB;
+        table[0b11'110'011] = &Interpreter::DI;
+        // table[0b11'111'011] = &Interpreter::EI;
+        TABLE_FILL(PUSH_r16, 0b11'00'0101, 4, 2);
+        table[0b11001101] = &Interpreter::CALL_u16;
+        // table[0b11'000'110] = &Interpreter::ADD_A_u8;
+        table[0b11'001'110] = &Interpreter::ADC_A_u8;
+        // table[0b11'010'110] = &Interpreter::SUB_A_u8;
+        // table[0b11'011'110] = &Interpreter::SBC_A_u8;
+        // table[0b11'100'110] = &Interpreter::AND_A_u8;
+        // table[0b11'101'110] = &Interpreter::XOR_A_u8;
+        // table[0b11'110'110] = &Interpreter::OR_A_u8;
+        // table[0b11'111'110] = &Interpreter::CP_A_u8;
+        // TABLE_FILL(RST, 0b11'000'111, 3, 3);
 
 #undef TABLE_FILL
 #undef DOUBLE_TABLE_FILL
