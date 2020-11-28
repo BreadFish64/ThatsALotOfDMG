@@ -36,7 +36,7 @@ Bus::Bus(std::unique_ptr<Cartridge> _cartridge, CPU::BaseCPU _cpu, std::unique_p
             std::ranges::fill(io_tags.first<0xE00>(),
                               MemoryTag{.read = false, .write = false, .handler = 0});
             std::ranges::fill(io_tags.last<0x100>(),
-                              MemoryTag{.read = false, .write = false, .handler = 0});
+                              MemoryTag{.read = true, .write = true, .handler = 0});
         }
     }
 
