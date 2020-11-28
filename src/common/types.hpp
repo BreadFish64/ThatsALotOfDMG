@@ -9,6 +9,8 @@
 
 namespace CGB {
 
+using namespace std::literals;
+
 using HANDLE = void*;
 
 using u8 = std::uint8_t;

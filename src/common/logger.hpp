@@ -2,7 +2,10 @@
 
 #include <array>
 #include <cassert>
+#include <functional>
 #include <string_view>
+
+#include <boost/lockfree/spsc_queue.hpp>
 
 #include <fmt/chrono.h>
 #include <fmt/color.h>
@@ -20,13 +23,31 @@ enum class LogLevel {
     Critical,
 };
 
+using DeferredLog = std::function<std::pair<LogLevel, std::string>()>;
+using LogQueue = boost::lockfree::spsc_queue<DeferredLog, boost::lockfree::capacity<256>>;
+
+inline LogQueue log_queue{};
+
+void InitLogger();
+
+template <typename... Args, usize... idx>
+std::string FormatLog(std::tuple<Args...> args, std::index_sequence<idx...>) {
+    return fmt::format(std::get<idx>(args)...);
+}
+
+void ConsumeLog(DeferredLog log);
+
 template <typename... Args>
-void Log(LogLevel level, Args&&... args) {
-    static constexpr std::array styles{
-        fmt::fg(fmt::color::gray), fmt::fg(fmt::color::white),   fmt::fg(fmt::color::yellow),
-        fmt::fg(fmt::color::red),  fmt::fg(fmt::color::magenta),
-    };
-    fmt::print(styles[static_cast<usize>(level)], std::forward<Args>(args)...);
+void Log(LogLevel level, Args... args) {
+    auto log = DeferredLog{[level, args = std::make_tuple(args...)] {
+        return std::make_pair(level,
+                              FormatLog(std::move(args), std::index_sequence_for<Args...>{}));
+    }};
+    if constexpr (IS_DEBUG) {
+        ConsumeLog(std::move(log));
+    } else {
+        log_queue.push(std::move(log));
+    }
 }
 
 constexpr std::string_view NormalizePath(std::string_view str) {

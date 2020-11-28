@@ -1,15 +1,15 @@
 find_package(fmt REQUIRED)
+find_package(Boost REQUIRED)
 
 add_library(Common STATIC
 	"logger.hpp"
     "types.hpp"
     "virtual_memory.hpp"
-    
-)
+ "logger.cpp")
 
 CGB_ADD_DEFINITIONS(Common)
 
-target_link_libraries(Common PUBLIC fmt::fmt)
+target_link_libraries(Common PUBLIC fmt::fmt Boost::boost)
 
 if(MSVC)
 target_sources(Common PRIVATE
