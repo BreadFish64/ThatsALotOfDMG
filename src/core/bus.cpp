@@ -5,22 +5,23 @@
 #include "core/cartridge/specialized_cartridge.hpp"
 #include "cpu/cpu.hpp"
 #include "ppu/ppu.hpp"
+#include "timer.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
 u8 Bus::ReadNop(Bus&, GADDR addr, u64 timestamp) {
     LOG(Warning, "Unmapped memory read {:#06X} on cycle {}", addr, timestamp);
     return ~0;
 }
 void Bus::WriteNop(Bus&, GADDR addr, u8 val, u64 timestamp) {
-    LOG(Warning, "Unmapped memory write {:#06X} = {:#04X} on cycle {}", addr, val,
-        timestamp);
+    LOG(Warning, "Unmapped memory write {:#06X} = {:#04X} on cycle {}", addr, val, timestamp);
 }
 
-Bus::Bus(std::unique_ptr<Cartridge> _cartridge, CPU::BaseCPU _cpu, std::unique_ptr<PPU> _ppu)
+Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::unique_ptr<PPU> _ppu)
     : address_space{ADDRESS_SPACE * 2}, cartridge{SpecializedCartridge::Make(
                                             std::move(*_cartridge))},
-      cpu{std::move(_cpu)}, ppu{std::move(_ppu)}, tag_backing{TAG_TYPES::SIZE} {
+      cpu{std::move(_cpu)}, ppu{std::move(_ppu)}, timer{std::make_unique<Timer>()}, tag_backing{
+                                                      TAG_TYPES::SIZE} {
 
     LOG(Info, "Installing WRAM on bus");
     {
@@ -63,18 +64,22 @@ Bus::Bus(std::unique_ptr<Cartridge> _cartridge, CPU::BaseCPU _cpu, std::unique_p
     switchable_wram[1] = wram_backing.Map(
         0x1000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xF000);
 
+    auto HRAM_tag = RegisterMemoryTag(ReadHRAM, WriteHRAM);
+    for (u8 offset = 0x80; offset < 0xFF; ++offset) { AttachIOHandler(offset, HRAM_tag); }
+
     cartridge->Install(*this);
     cpu.Install(*this);
     ppu->Install(*this);
+    timer->Install(*this);
     LOG(Info, "All hardware installed onto bus");
     cpu.Run();
 }
 
 Bus::~Bus() {}
 
-Cartridge& Bus::GetCartridge() { return static_cast<Cartridge&>(*cartridge); }
+CartridgeHeader& Bus::GetCartridge() { return static_cast<CartridgeHeader&>(*cartridge); }
 
-const Cartridge& Bus::GetCartridge() const { return static_cast<const Cartridge&>(*cartridge); }
+const CartridgeHeader& Bus::GetCartridge() const { return static_cast<const CartridgeHeader&>(*cartridge); }
 
 Common::VirtualMemory::ReservedMappedSection Bus::MapNopTag(u8 page) {
     return tag_backing.Map(TAG_TYPES::NOP, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE,

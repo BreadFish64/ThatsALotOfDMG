@@ -1,8 +1,10 @@
 #include "interpreter.hpp"
 
-namespace CGB::CPU {
+namespace CGB::Core::CPU {
 
-void Interpreter::Install(Bus& bus) { this->bus = &bus; }
+void Interpreter::Install(Bus& bus) {
+    this->bus = &bus;
+}
 void Interpreter::Run() {
     PC = 0xFF;
     timestamp = 0;
@@ -15,4 +17,5 @@ void Interpreter::Run() {
         (this->*JUMP_TABLE[opcode])();
     }
 }
+
 } // namespace CGB::CPU

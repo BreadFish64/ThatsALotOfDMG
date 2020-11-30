@@ -2,7 +2,7 @@
 #include "core/bus.hpp"
 #include "ppu.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
 u8 PPU::ReadOAM(GADDR addr, [[maybe_unused]] u64 timestamp) {
     LOG(Warning, "OAM access is not properly timed");
@@ -21,6 +21,23 @@ void PPU::OAMWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
     bus.GetPPU().WriteOAM(addr, val, timestamp);
 }
 
+u8 PPU::LCDReadHandler([[maybe_unused]] Bus& bus, GADDR addr, u64 timestamp) {
+    switch (addr) {
+    case 0xFF44: return timestamp % SCANLINE_CYCLES;
+    default: LOG(Error, "Unimplemented LCD Register read {:#06X} on cycle {}", addr, timestamp);
+        return ~0;
+    };
+}
+
+void PPU::LCDWriteHandler([[maybe_unused]] Bus& bus, GADDR addr, u8 val, u64 timestamp) {
+    switch (addr) {
+    case 0xFF44: return;
+    default:
+        LOG(Error, "Unimplemented LCD Register write {:#06X} = {:#04X} on cycle {}", addr, val,
+            timestamp);
+    };
+}
+
 PPU::PPU() {}
 
 void PPU::Install(Bus& bus) {
@@ -34,6 +51,11 @@ void PPU::Install(Bus& bus) {
     bus.GetAddressSpace().Split(Bus::ADDRESS_SPACE + 0x9000, Bus::PAGE_SIZE);
     vram_tags[0] = bus.MapPassthroughTag(0x8);
     vram_tags[1] = bus.MapPassthroughTag(0x9);
+
+    auto OAM_tag = bus.RegisterMemoryTag(OAMReadHandler, OAMWriteHandler);
+    std::ranges::fill(bus.Tags().subspan<0xFE00, 0xA0>(), OAM_tag);
+    auto LCD_tag = bus.RegisterMemoryTag(LCDReadHandler, LCDWriteHandler);
+    for (u8 io = 0x40; io <= 0x4F; ++io) bus.AttachIOHandler(io, LCD_tag);
 }
 
 } // namespace CGB

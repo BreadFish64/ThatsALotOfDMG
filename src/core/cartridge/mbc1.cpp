@@ -6,9 +6,9 @@
 #include "core/bus.hpp"
 #include "core/cartridge/mbc1.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
-MBC1::MBC1(Cartridge&& unspecialized) : SpecializedCartridge{std::move(unspecialized)} {
+MBC1::MBC1(CartridgeHeader&& unspecialized) : SpecializedCartridge{std::move(unspecialized)} {
     if (CartridgeType() != CARTRIDGE_TYPE::MBC1) {
         if (CartridgeType() == CARTRIDGE_TYPE::MBC1_RAM_BATTERY) {
             ram_file_path = rom_file_path.replace_extension(".sav");

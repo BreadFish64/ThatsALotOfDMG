@@ -3,13 +3,13 @@
 #include <filesystem>
 
 #include "common/virtual_memory.hpp"
-namespace CGB {
+namespace CGB::Core {
 
 static constexpr u16 GenLicenseeCode(u16 code) {
     return (((code & 0xF0) << 4) | (code & 0x0F)) + ('0' << 8 | '0');
 }
 
-class Cartridge {
+class CartridgeHeader {
 protected:
     Common::VirtualMemory::MappedFile rom_file_handle;
     Common::VirtualMemory::MemoryBacking rom_backing;
@@ -19,10 +19,10 @@ protected:
     std::filesystem::path rom_file_path;
 
 public:
-    Cartridge(Cartridge&&) = default;
-    explicit Cartridge(std::filesystem::path path);
-    ~Cartridge();
-    Cartridge& operator=(Cartridge&&) = default;
+    CartridgeHeader(CartridgeHeader&&) = default;
+    explicit CartridgeHeader(std::filesystem::path path);
+    ~CartridgeHeader();
+    CartridgeHeader& operator=(CartridgeHeader&&) = default;
 
     enum class CGB_FLAG : u8 {
         BACKWARD_COMPATIBLE = 0x80,

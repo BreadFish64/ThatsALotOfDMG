@@ -4,20 +4,21 @@
 
 #include "cartridge.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
 class Bus;
 
-class SpecializedCartridge : public Cartridge {
+class SpecializedCartridge : public CartridgeHeader {
 
 protected:
-    explicit SpecializedCartridge(Cartridge&& unspecialized) : Cartridge{std::move(unspecialized)} {};
+    explicit SpecializedCartridge(CartridgeHeader&& unspecialized)
+        : CartridgeHeader{std::move(unspecialized)} {};
 
 public:
     explicit SpecializedCartridge(SpecializedCartridge&&) = default;
     virtual ~SpecializedCartridge() = default;
 
-    static std::unique_ptr<SpecializedCartridge> Make(Cartridge unspecialized);
+    static std::unique_ptr<SpecializedCartridge> Make(CartridgeHeader unspecialized);
     virtual void Install(Bus& bus) = 0;
 };
 

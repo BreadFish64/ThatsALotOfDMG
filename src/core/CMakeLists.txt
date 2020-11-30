@@ -11,7 +11,7 @@ add_library(Core STATIC
     "cpu/cpu.cpp"
     "ppu/ppu.cpp"
     "ppu/ppu.hpp"
- "cpu/interpreter.hpp" "cpu/interpreter.cpp")
+ "cpu/interpreter.hpp" "cpu/interpreter.cpp" "timer.hpp" "timer.cpp")
 
 CGB_ADD_DEFINITIONS(Core)
 

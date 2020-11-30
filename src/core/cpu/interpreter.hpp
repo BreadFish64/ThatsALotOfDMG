@@ -23,9 +23,9 @@
     (base, shift1, std::make_integer_sequence<u8, 1 << bits1>(), shift2,                           \
      std::make_integer_sequence<u8, 1 << bits2>());
 
-namespace CGB::CPU {
+namespace CGB::Core::CPU {
 
-class Interpreter {
+class Interpreter : public BaseCPU {
     union {
         std::array<u8, 8> reg_arr;
         struct {
@@ -704,8 +704,8 @@ class Interpreter {
     ();
 
 public:
-    void Install(Bus& bus);
-    void Run();
+    virtual void Install(Bus& bus) override;
+    virtual void Run() override;
 };
 
 } // namespace CGB::CPU

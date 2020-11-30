@@ -6,12 +6,13 @@
 #include "common/virtual_memory.hpp"
 #include "cpu/cpu.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
-class Cartridge;
+class CartridgeHeader;
 class SpecializedCartridge;
 class BaseCPU;
 class PPU;
+class Timer;
 
 struct MemoryTag {
     bool read : 1;
@@ -35,6 +36,14 @@ private:
     static u8 ReadNop(Bus& bus, GADDR addr, u64 timestamp);
     static void WriteNop(Bus& bus, GADDR addr, u8 val, u64 timestamp);
 
+    std::array<u8, 0x80> HRAM;
+    static u8 ReadHRAM(Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp) {
+        return bus.HRAM[addr - 0xFF80];
+    };
+    static void WriteHRAM(Bus& bus, GADDR addr, u8 val, [[maybe_unused]] u64 timestamp) {
+        bus.HRAM[addr - 0xFF80] = val;
+    };
+
     std::array<ReadHandler, 1 << 6> read_handlers{ReadNop};
     std::array<WriteHandler, 1 << 6> write_handlers{WriteNop};
     usize memory_handler_count{1};
@@ -42,8 +51,9 @@ private:
     Common::VirtualMemory::ReservedSpace address_space;
 
     std::unique_ptr<SpecializedCartridge> cartridge;
-    CPU::BaseCPU cpu;
+    CPU::MainCPU cpu;
     std::unique_ptr<PPU> ppu;
+    std::unique_ptr<Timer> timer;
 
     Common::VirtualMemory::MemoryBacking wram_backing;
     std::array<Common::VirtualMemory::ReservedMappedSection, 2> fixed_wram;
@@ -52,9 +62,8 @@ private:
     Common::VirtualMemory::MemoryBacking tag_backing;
     std::array<Common::VirtualMemory::ReservedMappedSection, 4> wram_tags;
 
-
 public:
-    explicit Bus(std::unique_ptr<Cartridge> cartridge, CPU::BaseCPU cpu,
+    explicit Bus(std::unique_ptr<CartridgeHeader> cartridge, CPU::MainCPU cpu,
                  std::unique_ptr<PPU> ppu);
     ~Bus();
     auto Memory() { return address_space.Span().first<ADDRESS_SPACE>(); }
@@ -62,11 +71,12 @@ public:
 
     Common::VirtualMemory::ReservedSpace& GetAddressSpace() { return address_space; };
 
-    Cartridge& GetCartridge();
-    const Cartridge& GetCartridge() const;
+    CartridgeHeader& GetCartridge();
+    const CartridgeHeader& GetCartridge() const;
 
     PPU& GetPPU() { return *ppu; }
-    CPU::BaseCPU& GetCPU() { return cpu; }
+    CPU::MainCPU& GetCPU() { return cpu; }
+    Timer& GetTimer() { return *timer; }
 
     Common::VirtualMemory::ReservedMappedSection MapNopTag(u8 page);
     Common::VirtualMemory::ReservedMappedSection MapPassthroughTag(u8 page);
@@ -83,6 +93,7 @@ public:
         if (tag.write) [[unlikely]] return write_handlers[tag.handler](*this, addr, val, timestamp);
         Memory()[addr] = val;
     }
+    void AttachIOHandler(u8 idx, MemoryTag tag) { Tags()[0xFF00 + idx] = tag; }
 
     MemoryTag RegisterMemoryTag(ReadHandler read_handler, WriteHandler write_handler);
 };

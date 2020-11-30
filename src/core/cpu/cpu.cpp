@@ -4,18 +4,18 @@
 #include "cpu.hpp"
 #include "interpreter.hpp"
 
-namespace CGB::CPU {
-BaseCPU::BaseCPU() = default;
-BaseCPU::BaseCPU(BaseCPU&&) = default;
-BaseCPU::~BaseCPU() = default;
-BaseCPU& BaseCPU::operator=(BaseCPU&&) = default;
+namespace CGB::Core::CPU {
+MainCPU::MainCPU() = default;
+MainCPU::MainCPU(MainCPU&&) = default;
+MainCPU::~MainCPU() = default;
+MainCPU& MainCPU::operator=(MainCPU&&) = default;
 
-void BaseCPU::Install(Bus& bus) {
+void MainCPU::Install(Bus& bus) {
     LOG(Info, "Installing CPU onto bus");
-    interpreter = std::make_unique<Interpreter>();
-    interpreter->Install(bus);
+    impl = std::make_unique<Interpreter>();
+    impl->Install(bus);
 }
 
-void BaseCPU::Run() { interpreter->Run(); }
+void MainCPU::Run() { impl->Run(); }
 
 } // namespace CGB::CPU

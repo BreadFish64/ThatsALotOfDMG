@@ -3,7 +3,7 @@
 #include "common/virtual_memory.hpp"
 #include "specialized_cartridge.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
 class Bus;
 struct MemoryTag;
@@ -44,10 +44,10 @@ class MBC1 : public SpecializedCartridge {
     static void BankingModeSelectHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
 
 public:
-    explicit MBC1(Cartridge&& unspecialized);
+    explicit MBC1(CartridgeHeader&& unspecialized);
     ~MBC1();
 
     virtual void Install(Bus& bus) override;
 };
 
-} // namespace CGB
+} // namespace CGB::Core

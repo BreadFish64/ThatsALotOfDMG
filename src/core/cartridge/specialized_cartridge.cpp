@@ -3,9 +3,9 @@
 #include "mbc1.hpp"
 #include "specialized_cartridge.hpp"
 
-namespace CGB {
+namespace CGB::Core {
 
-std::unique_ptr<SpecializedCartridge> SpecializedCartridge::Make(Cartridge unspecialized) {
+std::unique_ptr<SpecializedCartridge> SpecializedCartridge::Make(CartridgeHeader unspecialized) {
     switch (unspecialized.CartridgeType()) {
     case CARTRIDGE_TYPE::MBC1:
     case CARTRIDGE_TYPE::MBC1_RAM:
