@@ -18,12 +18,12 @@ void Logger::ConsumeLog(DeferredLog log) {
 
 void Logger::ConsumeLogs() {
     while (run_logger) {
-        log_queue.pop_to_output_iterator(std::back_inserter(log_buffer));
+        log_queue.pop(std::back_inserter(log_buffer));
         if (!log_buffer.empty()) {
             ConsumeLog(std::move(log_buffer.front()));
             log_buffer.pop_front();
         }
-        if (log_queue.empty()) { std::this_thread::yield(); }
+        if (log_queue.empty() && log_buffer.empty()) { std::this_thread::sleep_for(50us); }
     }
     logger_closed = true;
 }

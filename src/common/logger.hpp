@@ -28,7 +28,7 @@ enum class LogLevel {
 };
 
 using DeferredLog = std::function<std::pair<LogLevel, std::string>()>;
-using LogQueue = boost::lockfree::spsc_queue<DeferredLog, boost::lockfree::capacity<256>>;
+using LogQueue = boost::lockfree::spsc_queue<DeferredLog, boost::lockfree::capacity<512>>;
 
 static inline class Logger {
     std::atomic<bool> run_logger;
@@ -60,6 +60,8 @@ void Log(LogLevel level, Args... args) {
     if constexpr (IS_DEBUG) {
         logger.ConsumeLog(std::move(log));
     } else {
+        while (!logger.log_queue.write_available())
+            ;
         logger.log_queue.push(std::move(log));
     }
 }
