@@ -1,7 +1,27 @@
 #pragma once
 
+#include <chrono>
+
 #include "common/types.hpp"
 #include "core/bus.hpp"
+
+// These macros were a mistake and I'm sorry to anyone trying to understand them
+#define TABLE_FILL(operation, base, shift, bits)                                                   \
+    [&table]<u8... idx>(u8 _base, u8 _shift, std::integer_sequence<u8, idx...>) {                  \
+        ((table[_base | (idx << _shift)] = &Interpreter::operation<idx>), ...);                    \
+    }                                                                                              \
+    (base, shift, std::make_integer_sequence<u8, 1 << bits>());
+#define DOUBLE_TABLE_FILL(operation, base, shift1, bits1, shift2, bits2)                           \
+    [&table]<u8... idx1, u8... idx2>(u8 _base, u8 _shift1, std::integer_sequence<u8, idx1...>,     \
+                                     u8 _shift2, std::integer_sequence<u8, idx2...> count2) {      \
+        const auto helper = [&table]<u8 left, u8... right>(u8 _base, u8 _shift,                    \
+                                                           std::integer_sequence<u8, right...>) {  \
+            ((table[_base | (right << _shift)] = &Interpreter::operation<left, right>), ...);      \
+        };                                                                                         \
+        ((helper.template operator()<idx1>(_base | (idx1 << _shift1), _shift2, count2)), ...);     \
+    }                                                                                              \
+    (base, shift1, std::make_integer_sequence<u8, 1 << bits1>(), shift2,                           \
+     std::make_integer_sequence<u8, 1 << bits2>());
 
 namespace CGB::CPU {
 
@@ -31,10 +51,13 @@ class Interpreter {
         bool Z, N, H, C;
     } flag;
     bool IME = true;
+    bool run;
 
     u64 timestamp;
 
     Bus* bus;
+
+    std::chrono::high_resolution_clock::time_point start;
 
     static constexpr std::array<std::string_view, 8> R8_NAME{
         "B", "C", "D", "E", "H", "L", "[HL]", "A",
@@ -65,6 +88,9 @@ class Interpreter {
     };
     static constexpr std::array<std::string_view, 8> ALU_OP_NAME{
         "ADD", "ADC", "SUB", "SBC", "AND", "XOR", "OR", "CP",
+    };
+    static constexpr std::array<std::string_view, 8> CB_SHIFT_OP_NAME{
+        "RLC", "RRC", "RL", "RR", "SLA", "SRA", "SWAP", "SRL",
     };
 
     u8 Load(GADDR addr) {
@@ -213,7 +239,7 @@ class Interpreter {
     }
     void SUB(u8 rhs) {
         u8 lhs = r8.A;
-        flag.H = static_cast<s8>((lhs & 0x0F) - (rhs & 0x0F)) < 0;
+        flag.H = (lhs & 0x0F) < (rhs & 0x0F);
         u8 result;
         flag.C = __builtin_sub_overflow(lhs, rhs, &result);
         flag.Z = result == 0;
@@ -259,11 +285,70 @@ class Interpreter {
     }
     void CP(u8 rhs) {
         u8 lhs = r8.A;
-        flag.H = static_cast<s8>((lhs & 0x0F) - (rhs & 0x0F)) < 0;
+        flag.H = (lhs & 0x0F) < (rhs & 0x0F);
         u8 result;
         flag.C = __builtin_sub_overflow(lhs, rhs, &result);
         flag.Z = result == 0;
         flag.N = true;
+    }
+
+    u8 RLC(u8 val) {
+        flag.C = val & (1 << 7);
+        val = (val << 1) | flag.C;
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 RRC(u8 val) {
+        flag.C = val & 1;
+        val = (flag.C << 7) | (val >> 1);
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 RL(u8 val) {
+        bool carry = val & (1 << 7);
+        val = (val << 1) | flag.C;
+        flag.C = carry;
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 RR(u8 val) {
+        bool carry = val & 1;
+        val = (flag.C << 7) | (val >> 1);
+        flag.C = carry;
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 SLA(u8 val) {
+        flag.C = val & (1 << 7);
+        val <<= 1;
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 SRA(u8 val) {
+        flag.C = val & 1;
+        val = static_cast<s8>(val) >> 1;
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 SWAP(u8 val) {
+        val = (val << 4) | (val >> 4);
+        flag.C = false;
+        flag.N = false;
+        flag.H = false;
+        return val;
+    }
+    u8 SRL(u8 val) {
+        flag.C = val & 1;
+        val >>= 1;
+        flag.N = false;
+        flag.H = false;
+        return val;
     }
 
     static constexpr std::array ALU_OPS{
@@ -272,8 +357,15 @@ class Interpreter {
     };
 
     void UnimplementedOpcode() {
+        auto seconds =
+            std::chrono::duration<double>{std::chrono::high_resolution_clock::now() - start};
+
         LOG(Trace, "{:#06X} Unimplemented Opcode {:#010B}", PC, bus->Read(PC, timestamp));
+        LOG(Info, "Host time: {} Cycles: {} Speed: {}Hz", seconds, timestamp,
+            static_cast<u64>(timestamp / seconds.count()));
+        run = false;
     }
+    using Opcode = decltype(&Interpreter::UnimplementedOpcode);
     void NOP() { LOG(Trace, "\t\t{:#06X} NOP", PC); }
     void JR_PCrel() {
         s8 offset = static_cast<s8>(Imm8());
@@ -397,6 +489,64 @@ class Interpreter {
         LOG(Trace, "\t\t{:#06X} JP\t{:#06X}", PC - 2, braddr);
         Jump(braddr);
     }
+    template <u8 operation, u8 reg_idx>
+    void ShiftRot_r8([[maybe_unused]] u8 instruction) {
+        u8 val = ReadR8<reg_idx>();
+        val = (this->*std::array{
+                          &Interpreter::RLC,
+                          &Interpreter::RRC,
+                          &Interpreter::RL,
+                          &Interpreter::RR,
+                          &Interpreter::SLA,
+                          &Interpreter::SRA,
+                          &Interpreter::SWAP,
+                          &Interpreter::SRL,
+                      }[operation])(val);
+        flag.Z = val == 0;
+        WriteR8<reg_idx>(val);
+        LOG(Trace, "\t{:#06X} {}\t{}", PC - 1, CB_SHIFT_OP_NAME[operation], R8_NAME[reg_idx]);
+    }
+    template <u8 reg_idx>
+    void BIT_u3_r8(u8 instruction) {
+        u8 bit = (instruction >> 3) & 0b111;
+        flag.Z = ReadR8<reg_idx>() & (1 << bit);
+        flag.N = false;
+        flag.H = true;
+        LOG(Trace, "\t\t{:#06X} BIT\t{},\t{}", PC - 1, bit, R8_NAME[reg_idx]);
+    }
+    template <u8 reg_idx>
+    void RES_u3_r8(u8 instruction) {
+        u8 bit = (instruction >> 3) & 0b111;
+        WriteR8<reg_idx>(ReadR8<reg_idx>() & ~(1 << bit));
+        LOG(Trace, "\t\t{:#06X} RES\t{},\t{}", PC - 1, bit, R8_NAME[reg_idx]);
+    }
+    template <u8 reg_idx>
+    void SET_u3_r8(u8 instruction) {
+        u8 bit = (instruction >> 3) & 0b111;
+        WriteR8<reg_idx>(ReadR8<reg_idx>() | (1 << bit));
+        LOG(Trace, "\t\t{:#06X} SET\t{},\t{}", PC - 1, bit, R8_NAME[reg_idx]);
+    }
+    using OpcodeCB = decltype(&Interpreter::ShiftRot_r8<0, 0>);
+    static constexpr std::array<OpcodeCB, 256> CB_TABLE = []() constexpr {
+        std::array<OpcodeCB, 256> table{};
+        DOUBLE_TABLE_FILL(ShiftRot_r8, 0b00'000'000, 3, 3, 0, 3);
+        for (u8 base = 0b01'000'000; base != 0b10'000'000; base += 0b00'001'000)
+            TABLE_FILL(BIT_u3_r8, base, 0, 3);
+        for (u8 base = 0b01'000'000; base != 0b10'000'000; base += 0b00'001'000)
+            TABLE_FILL(RES_u3_r8, base, 0, 3);
+        for (u8 base = 0b11'000'000; base != 0b00'000'000; base += 0b00'001'000)
+            TABLE_FILL(SET_u3_r8, base, 0, 3);
+        return table;
+    }
+    ();
+    void CB_prefix() {
+        u8 op = Imm8();
+        (this->*CB_TABLE[op])(op);
+    }
+    void DI() {
+        IME = false;
+        LOG(Trace, "\t\t{:#06X} DI", PC);
+    }
     template <u8 condition>
     void CALL_cond_u16() {
         GADDR braddr = Imm16();
@@ -411,16 +561,12 @@ class Interpreter {
         PushWord(ReadG3R16<reg_idx>());
         timestamp += 4;
         LOG(Trace, "\t\t{:#06X} PUSH\t{}", PC, G3_R16_NAME[reg_idx]);
-    };
+    }
     void CALL_u16() {
         GADDR braddr = Imm16();
         PushWord(PC + 1);
         LOG(Trace, "\t\t{:#06X} CALL\t{:#06X}", PC - 2, braddr);
         Jump(braddr);
-    }
-    void DI() {
-        IME = false;
-        LOG(Trace, "\t\t{:#06X} DI", PC);
     }
     template <u8 operation>
     void ALU_A_u8() {
@@ -428,28 +574,8 @@ class Interpreter {
         (this->*ALU_OPS[operation])(rhs);
         LOG(Trace, "\t\t{:#06X} {}\tA,\t{:#04X}", PC - 1, ALU_OP_NAME[operation], rhs);
     }
-    using Opcode = decltype(&Interpreter::NOP);
 
     static constexpr std::array<Opcode, 256> JUMP_TABLE = []() constexpr {
-
-        // These macros were a mistake and I'm sorry to anyone trying to understand them
-#define TABLE_FILL(operation, base, shift, bits)                                                   \
-    [&table]<u8... idx>(u8 _base, u8 _shift, std::integer_sequence<u8, idx...>) {                  \
-        ((table[_base | (idx << _shift)] = &Interpreter::operation<idx>), ...);                    \
-    }                                                                                              \
-    (base, shift, std::make_integer_sequence<u8, 1 << bits>());
-#define DOUBLE_TABLE_FILL(operation, base, shift1, bits1, shift2, bits2)                           \
-    [&table]<u8... idx1, u8... idx2>(u8 _base, u8 _shift1, std::integer_sequence<u8, idx1...>,     \
-                                     u8 _shift2, std::integer_sequence<u8, idx2...> count2) {      \
-        const auto helper = [&table]<u8 left, u8... right>(u8 _base, u8 _shift,                    \
-                                                           std::integer_sequence<u8, right...>) {  \
-            ((table[_base | (right << _shift)] = &Interpreter::operation<left, right>), ...);      \
-        };                                                                                         \
-        ((helper.template operator()<idx1>(_base | (idx1 << _shift1), _shift2, count2)), ...);     \
-    }                                                                                              \
-    (base, shift1, std::make_integer_sequence<u8, 1 << bits1>(), shift2,                           \
-     std::make_integer_sequence<u8, 1 << bits2>());
-
         std::array<Opcode, 256> table{};
         std::ranges::fill(table, &Interpreter::UnimplementedOpcode);
         table[0b00000000] = &Interpreter::NOP;
@@ -484,7 +610,7 @@ class Interpreter {
         // table[0b11110010] = &Interpreter::LDIO_A_Caddr
         table[0b11111010] = &Interpreter::LD_A_u16addr;
         table[0b11'000'011] = &Interpreter::JP_u16;
-        // table[0b11'001'011] = &Interpreter::CB;
+        table[0b11'001'011] = &Interpreter::CB_prefix;
         table[0b11'110'011] = &Interpreter::DI;
         // table[0b11'111'011] = &Interpreter::EI;
         TABLE_FILL(CALL_cond_u16, 0b110'00'100, 3, 2);
@@ -492,9 +618,6 @@ class Interpreter {
         table[0b11001101] = &Interpreter::CALL_u16;
         TABLE_FILL(ALU_A_u8, 0b11'000'110, 3, 3);
         // TABLE_FILL(RST, 0b11'000'111, 3, 3);
-
-#undef TABLE_FILL
-#undef DOUBLE_TABLE_FILL
         return table;
     }
     ();
@@ -505,3 +628,6 @@ public:
 };
 
 } // namespace CGB::CPU
+
+#undef TABLE_FILL
+#undef DOUBLE_TABLE_FILL
