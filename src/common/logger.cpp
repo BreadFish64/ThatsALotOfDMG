@@ -1,8 +1,3 @@
-#include <deque>
-#include <fstream>
-#include <iostream>
-#include <thread>
-
 #include "common/logger.hpp"
 
 namespace CGB::Logger {
@@ -15,28 +10,41 @@ static constexpr std::array LEVEL_NAMES{
     "Trace"sv, "Info"sv, "Warning"sv, "Error"sv, "Critical"sv,
 };
 
-static inline std::thread logging_thread;
-static inline std::ofstream log_file;
-static inline std::deque<DeferredLog> log_buffer;
-
-void ConsumeLog(DeferredLog log) {
+void Logger::ConsumeLog(DeferredLog log) {
     auto [level, str] = log();
     fmt::print(LEVEL_STYLES[static_cast<usize>(level)], str);
     fmt::print(log_file, "{}:\t{}", LEVEL_NAMES[static_cast<usize>(level)], str);
 }
 
-[[maybe_unused]] static void ConsumeLogs() {
-    while (true) {
+void Logger::ConsumeLogs() {
+    while (run_logger) {
         log_queue.pop_to_output_iterator(std::back_inserter(log_buffer));
-        ConsumeLog(std::move(log_buffer.front()));
-        log_buffer.pop_front();
+        if (!log_buffer.empty()) {
+            ConsumeLog(std::move(log_buffer.front()));
+            log_buffer.pop_front();
+        }
         if (log_queue.empty()) { std::this_thread::yield(); }
+    }
+    logger_closed = true;
+}
+
+Logger::Logger() {
+    log_file = std::ofstream{"log.txt"};
+
+    if constexpr (!IS_DEBUG) {
+        run_logger = true;
+        logger_closed = false;
+        logging_thread = std::thread{[this] { ConsumeLogs(); }};
     }
 }
 
-void InitLogger() {
-    log_file = std::ofstream{"log.txt"};
-    if constexpr (!IS_DEBUG) { logging_thread = std::thread{ConsumeLogs}; }
+Logger::~Logger() {
+    if constexpr (!IS_DEBUG) {
+        run_logger = false;
+        while (!logging_thread.joinable())
+            ;
+        logging_thread.join();
+    }
 }
 
 } // namespace CGB::Logger

@@ -2,8 +2,12 @@
 
 #include <array>
 #include <cassert>
+#include <deque>
+#include <fstream>
 #include <functional>
+#include <iostream>
 #include <string_view>
+#include <thread>
 
 #include <boost/lockfree/spsc_queue.hpp>
 
@@ -26,16 +30,26 @@ enum class LogLevel {
 using DeferredLog = std::function<std::pair<LogLevel, std::string>()>;
 using LogQueue = boost::lockfree::spsc_queue<DeferredLog, boost::lockfree::capacity<256>>;
 
-inline LogQueue log_queue{};
+static inline class Logger {
+    std::atomic<bool> run_logger;
+    std::atomic<bool> logger_closed;
+    std::thread logging_thread;
+    std::ofstream log_file;
+    std::deque<DeferredLog> log_buffer;
 
-void InitLogger();
+public:
+    LogQueue log_queue;
+
+    Logger();
+    ~Logger();
+    void ConsumeLog(DeferredLog log);
+    void ConsumeLogs();
+} logger;
 
 template <typename... Args, usize... idx>
 std::string FormatLog(std::tuple<Args...> args, std::index_sequence<idx...>) {
     return fmt::format(std::get<idx>(args)...);
 }
-
-void ConsumeLog(DeferredLog log);
 
 template <typename... Args>
 void Log(LogLevel level, Args... args) {
@@ -44,9 +58,9 @@ void Log(LogLevel level, Args... args) {
                               FormatLog(std::move(args), std::index_sequence_for<Args...>{}));
     }};
     if constexpr (IS_DEBUG) {
-        ConsumeLog(std::move(log));
+        logger.ConsumeLog(std::move(log));
     } else {
-        log_queue.push(std::move(log));
+        logger.log_queue.push(std::move(log));
     }
 }
 
