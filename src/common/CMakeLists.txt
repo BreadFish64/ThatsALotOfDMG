@@ -3,9 +3,10 @@ find_package(Boost REQUIRED)
 
 add_library(Common STATIC
 	"logger.hpp"
+    "logger.cpp"
     "types.hpp"
     "virtual_memory.hpp"
- "logger.cpp")
+ )
 
 CGB_ADD_DEFINITIONS(Common)
 

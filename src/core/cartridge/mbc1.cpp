@@ -47,7 +47,7 @@ void MBC1::Install(Bus& bus) {
     tag_backing = Common::VirtualMemory::MemoryBacking{TAG_TYPES::SIZE};
     {
         auto tag_data =
-            tag_backing.Map(0, 0, Common::Windows::VirtualMemory::PROTECTION::READ_WRITE);
+            tag_backing.Map(0, 0, Common::VirtualMemory::PROTECTION::READ_WRITE);
 
         // Generate tag data
         auto ram_enable_tag = bus.RegisterMemoryTag(nullptr, RamEnableHandler);

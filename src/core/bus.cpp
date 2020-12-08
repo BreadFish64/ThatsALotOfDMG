@@ -18,10 +18,9 @@ void Bus::WriteNop(Bus&, GADDR addr, u8 val, u64 timestamp) {
 }
 
 Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::unique_ptr<PPU> _ppu)
-    : address_space{ADDRESS_SPACE * 2}, cartridge{SpecializedCartridge::Make(
-                                            std::move(*_cartridge))},
-      cpu{std::move(_cpu)}, ppu{std::move(_ppu)}, timer{std::make_unique<Timer>()}, tag_backing{
-                                                      TAG_TYPES::SIZE} {
+    : address_space{ADDRESS_SPACE * 2},
+      cartridge{SpecializedCartridge::Make(std::move(*_cartridge))}, cpu{std::move(_cpu)},
+      ppu{std::move(_ppu)}, timer{std::make_unique<Timer>()}, tag_backing{TAG_TYPES::SIZE} {
 
     LOG(Info, "Installing WRAM on bus");
     {
@@ -71,15 +70,26 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
     cpu.Install(*this);
     ppu->Install(*this);
     timer->Install(*this);
+
+    // TODO: Figure out something else to do with this serial stub
+    auto serial_tag = RegisterMemoryTag(
+        ReadNop, []([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
+                    [[maybe_unused]] u64 timestamp) { static std::ofstream serial_output{"serial_output.txt"};
+            serial_output << static_cast<char>(val);
+            serial_output.flush();
+        });
+    AttachIOHandler(0x01, serial_tag);
+
     LOG(Info, "All hardware installed onto bus");
-    cpu.Run();
 }
 
 Bus::~Bus() {}
 
 CartridgeHeader& Bus::GetCartridge() { return static_cast<CartridgeHeader&>(*cartridge); }
 
-const CartridgeHeader& Bus::GetCartridge() const { return static_cast<const CartridgeHeader&>(*cartridge); }
+const CartridgeHeader& Bus::GetCartridge() const {
+    return static_cast<const CartridgeHeader&>(*cartridge);
+}
 
 Common::VirtualMemory::ReservedMappedSection Bus::MapNopTag(u8 page) {
     return tag_backing.Map(TAG_TYPES::NOP, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE,
@@ -114,4 +124,4 @@ MemoryTag Bus::RegisterMemoryTag(ReadHandler read_handler, WriteHandler write_ha
             .handler = static_cast<u8>(memory_handler_count++)};
 }
 
-} // namespace CGB
+} // namespace CGB::Core

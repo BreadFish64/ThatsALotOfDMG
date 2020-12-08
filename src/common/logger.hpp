@@ -9,7 +9,7 @@
 #include <string_view>
 #include <thread>
 
-#include <boost/lockfree/spsc_queue.hpp>
+#include <boost/lockfree/queue.hpp>
 
 #include <fmt/chrono.h>
 #include <fmt/color.h>
@@ -21,6 +21,7 @@ namespace CGB::Logger {
 
 enum class LogLevel {
     Trace,
+    Debug,
     Info,
     Warning,
     Error,
@@ -28,23 +29,24 @@ enum class LogLevel {
 };
 
 using DeferredLog = std::function<std::pair<LogLevel, std::string>()>;
-using LogQueue = boost::lockfree::spsc_queue<DeferredLog, boost::lockfree::capacity<512>>;
+using LogQueue = boost::lockfree::queue<DeferredLog*>;
 
-static inline class Logger {
+class Logger {
     std::atomic<bool> run_logger;
     std::atomic<bool> logger_closed;
     std::thread logging_thread;
     std::ofstream log_file;
-    std::deque<DeferredLog> log_buffer;
 
 public:
-    LogQueue log_queue;
+    LogQueue log_queue{0};
 
     Logger();
     ~Logger();
-    void ConsumeLog(DeferredLog log);
+    void ConsumeLog(DeferredLog* log);
     void ConsumeLogs();
-} logger;
+};
+
+inline Logger logger;
 
 template <typename... Args, usize... idx>
 std::string FormatLog(std::tuple<Args...> args, std::index_sequence<idx...>) {
@@ -53,16 +55,14 @@ std::string FormatLog(std::tuple<Args...> args, std::index_sequence<idx...>) {
 
 template <typename... Args>
 void Log(LogLevel level, Args... args) {
-    auto log = DeferredLog{[level, args = std::make_tuple(args...)] {
+    auto log = new DeferredLog{[level, args = std::make_tuple(args...)] {
         return std::make_pair(level,
                               FormatLog(std::move(args), std::index_sequence_for<Args...>{}));
     }};
     if constexpr (IS_DEBUG) {
-        logger.ConsumeLog(std::move(log));
+        logger.ConsumeLog(log);
     } else {
-        while (!logger.log_queue.write_available())
-            ;
-        logger.log_queue.push(std::move(log));
+        logger.log_queue.push(log);
     }
 }
 
@@ -92,7 +92,7 @@ constexpr std::string_view NormalizePath(std::string_view str) {
 #endif
 
 #define LOG(level, message, ...)                                                                   \
-    if constexpr (IS_DEBUG || ::CGB::Logger::LogLevel::level != ::CGB::Logger::LogLevel::Trace)    \
+    if constexpr (/*IS_DEBUG ||*/ ::CGB::Logger::LogLevel::level != ::CGB::Logger::LogLevel::Trace)    \
         ::CGB::Logger::Log(::CGB::Logger::LogLevel::level, "{}:{} {}: " message "\n", NORM_PATH,   \
                            __LINE__, LOG_FUNC, __VA_ARGS__);
 

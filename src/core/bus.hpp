@@ -21,6 +21,10 @@ struct MemoryTag {
 };
 static_assert(sizeof(MemoryTag) == 1);
 
+enum class Event {
+    VBlank,
+};
+
 class Bus {
 public:
     using ReadHandler = u8 (*)(Bus&, GADDR, u64);

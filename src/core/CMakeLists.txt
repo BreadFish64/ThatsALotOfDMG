@@ -1,3 +1,5 @@
+find_package(Vulkan REQUIRED)
+
 add_library(Core STATIC
     "bus.hpp"
     "bus.cpp" 
@@ -11,8 +13,8 @@ add_library(Core STATIC
     "cpu/cpu.cpp"
     "ppu/ppu.cpp"
     "ppu/ppu.hpp"
- "cpu/interpreter.hpp" "cpu/interpreter.cpp" "timer.hpp" "timer.cpp")
+ "cpu/interpreter.hpp" "cpu/interpreter.cpp" "timer.hpp" "timer.cpp" "ppu/renderer.hpp" "ppu/renderer.cpp" "ppu/vulkan/vk_frontend.hpp" "ppu/vulkan/vk_instance.hpp"   "cartridge/bare.hpp" "cartridge/bare.cpp")
 
 CGB_ADD_DEFINITIONS(Core)
 
-target_link_libraries(Core PUBLIC Common)
+target_link_libraries(Core PUBLIC Common Vulkan::Vulkan)
