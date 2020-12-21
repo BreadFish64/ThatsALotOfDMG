@@ -72,13 +72,18 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
     timer->Install(*this);
 
     // TODO: Figure out something else to do with this serial stub
-    auto serial_tag = RegisterMemoryTag(
-        ReadNop, []([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                    [[maybe_unused]] u64 timestamp) { static std::ofstream serial_output{"serial_output.txt"};
+    auto serial_tag =
+        RegisterMemoryTag(ReadNop, []([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
+                                      u8 val, [[maybe_unused]] u64 timestamp) {
+            static std::ofstream serial_output{"serial_output.txt"};
             serial_output << static_cast<char>(val);
             serial_output.flush();
         });
     AttachIOHandler(0x01, serial_tag);
+    auto input_tag = RegisterMemoryTag([]([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
+                                          [[maybe_unused]] u64 timestamp) -> u8 { return 0; },
+                                       WriteNop);
+    AttachIOHandler(0x00, input_tag);
 
     LOG(Info, "All hardware installed onto bus");
 }

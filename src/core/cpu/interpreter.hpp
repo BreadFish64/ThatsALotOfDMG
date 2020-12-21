@@ -544,6 +544,10 @@ class Interpreter : public BaseCPU {
         WriteR8<dst_idx>(val);
         LOG(Trace, "\t\t{:#06X} LD\t{},\t{}", PC, R8_NAME[dst_idx], R8_NAME[src_idx]);
     }
+    void HALT([[maybe_unused]] u8 instruction) {
+        timestamp = schedule.begin()->first;
+        LOG(Trace, "\t\t{:#06X} HALT", PC);
+    }
     template <u8 operation, u8 reg_idx>
     void ALU_A_r8([[maybe_unused]] u8 instruction) {
         u8 rhs = ReadR8<reg_idx>();
@@ -772,7 +776,7 @@ class Interpreter : public BaseCPU {
         table[0b00'110'111] = Devirtualize<&Interpreter::SCF>;
         table[0b00'111'111] = Devirtualize<&Interpreter::CCF>;
         DOUBLE_TABLE_FILL(LD_r8_r8, 0b01'000'000, 3, 3, 0, 3);
-        table[0b01'110'110] = Devirtualize<&Interpreter::UnimplementedOpcode>; // HALT
+        table[0b01'110'110] = Devirtualize<&Interpreter::HALT>;
         DOUBLE_TABLE_FILL(ALU_A_r8, 0b10'000'000, 3, 3, 0, 3);
         TABLE_FILL(RET_cond, 0b110'00'000, 3, 2);
         table[0b11100000] = Devirtualize<&Interpreter::LDIO_u8addr_A>;
