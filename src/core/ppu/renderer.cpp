@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <immintrin.h>
 
 #include "common/logger.hpp"
 #include "renderer.hpp"
@@ -11,8 +10,9 @@ void Renderer::RecieveLCDWrite(PPU::FrameWrites::LCDWrite lcd_write) {
     std::memcpy(reinterpret_cast<u8*>(&lcd) + idx, &val, 1);
 }
 
-void Renderer::RecieveOAMWrite(PPU::FrameWrites::OAM_DMA oam_write) {
-    oam = std::move(oam_write.data);
+void Renderer::RecieveOAMWrite(PPU::FrameWrites::OAMWrite oam_write) {
+    auto [offset, val, scanline] = oam_write;
+    std::memcpy(reinterpret_cast<u8*>(&oam) + offset, &val, 1);
 }
 
 void Renderer::RecieveVRAMWrite(PPU::FrameWrites::VRAMWrite vram_write) {
@@ -23,8 +23,7 @@ void Renderer::RecieveVRAMWrite(PPU::FrameWrites::VRAMWrite vram_write) {
 void Renderer::SkipFrame(PPU::FrameWrites frame_writes) {
     LOG(Debug, "Skipping Frame");
     for (auto write : frame_writes.lcd_writes) RecieveLCDWrite(write);
-    if (!frame_writes.oam_dmas.empty())
-        RecieveOAMWrite(std::move(*(frame_writes.oam_dmas.end() - 1)));
+    for (auto write : frame_writes.oam_dmas) RecieveOAMWrite(write);
     for (auto write : frame_writes.vram_writes) RecieveVRAMWrite(write);
 }
 
@@ -37,31 +36,59 @@ void Renderer::RenderFrame(PPU::FrameWrites frame_writes) {
     auto& frame = presenter.GetCurrentFrame();
     for (unsigned scanline{0}; scanline < PPU::HEIGHT; ++scanline) {
         while (lcd_it->scanline < scanline) RecieveLCDWrite(*lcd_it++);
-        if (oam_it->scanline == scanline) RecieveOAMWrite(std::move(*oam_it++));
+        while (oam_it->scanline <= scanline) RecieveOAMWrite(*oam_it++);
         while (vram_it->scanline <= scanline) RecieveVRAMWrite(*vram_it++);
         auto buffer = frame.Scanline(scanline);
-        alignas(__m128i) auto background_palette = GetBGP();
-        // TODO: handle scx
-        u8 y = lcd.scy + scanline;
-        for (u8 tile_num{0}; tile_num < (PPU::WIDTH / 8); ++tile_num) {
-            unsigned idx = GetBGTileIndex(lcd.scx / 8 + tile_num, y / 8);
-            auto tile = GetTile(idx);
-            RenderBGSpriteRow(std::span<u32, 8>{buffer.data() + tile_num * 8, 8}, tile[y % 8], background_palette);
+        RenderBGScanline(scanline, buffer);
+        if (lcd.control & 0x02) {
+            alignas(__m256i) const std::array<std::array<u32, 4>, 2> palette_arr{GetPalette(lcd.obp0),
+                                                                           GetPalette(lcd.obp1)};
+            const auto palette = _mm256_load_si256(reinterpret_cast<const __m256i*>(palette_arr.data()));
+            const auto zero = _mm256_setzero_si256();
+            const auto four = _mm256_set1_epi32(4);
+            const auto reverse = _mm256_set_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+            for (const auto& object : oam) {
+                // TODO: support 16 line sprites
+                signed tile_y = scanline - object.ypos + 16;
+                if (tile_y < 0 || tile_y > 7) continue;
+                if (object.flags & 0x80) LOG(Trace, "Unimplemented sprite priority");
+                if (object.flags & 0x40) tile_y = 7 - tile_y;
+                auto tile_row = DecodeTile(GetSpriteTile(object.tile)[tile_y]);
+                if (object.flags & 0x20) tile_row = _mm256_permutevar8x32_epi32(tile_row, reverse);
+                auto mask = _mm256_cmpgt_epi32(tile_row, zero);
+                if (object.flags & 0x10) tile_row = _mm256_add_epi32(tile_row, four);
+                auto row = _mm256_permutevar8x32_epi32(palette, tile_row);
+                _mm256_maskstore_epi32(reinterpret_cast<int*>(buffer.data() + object.xpos - 8),
+                                        mask, row);
+            }
         }
     }
     presenter.PushFrame();
     // update junk during vblank
     while (lcd_it != frame_writes.lcd_writes.end() - 1) RecieveLCDWrite(*lcd_it++);
-    if (oam_it != frame_writes.oam_dmas.end() - 1)
-        RecieveOAMWrite(std::move(*(frame_writes.oam_dmas.end() - 2)));
+    while (oam_it != frame_writes.oam_dmas.end() - 1) RecieveOAMWrite(*oam_it++);
     while (vram_it != frame_writes.vram_writes.end() - 1) RecieveVRAMWrite(*vram_it++);
     speed = std::chrono::high_resolution_clock::now() - start;
 }
 
-void Renderer::RenderBGSpriteRow(std::span<u32, 8> pixels, u16 tile_row,
-                               const std::array<u32, 4>& palette) {
-    auto palette_vec = _mm256_set_m128i(
-        _mm_undefined_si128(), _mm_load_si128(reinterpret_cast<const __m128i*>(palette.data())));
+void Renderer::RenderBGScanline(unsigned scanline, std::span<u32, PPU::WIDTH>& buffer) {
+    alignas(__m128i) auto palette_arr = GetPalette(lcd.bgp);
+    auto background_palette =
+        _mm256_set_m128i(_mm_undefined_si128(),
+                         _mm_load_si128(reinterpret_cast<const __m128i*>(palette_arr.data())));
+    // TODO: handle scx
+    unsigned y = lcd.scy + scanline;
+    unsigned tile_x = lcd.scx / 8;
+    unsigned x_shift = lcd.scx % 8;
+    for (unsigned tile_num{0}; tile_num < (PPU::WIDTH / 8 + 1); ++tile_num) {
+        unsigned idx = GetBGTileIndex(tile_x + tile_num, y / 8);
+        auto tile = GetBGTile(idx);
+        RenderBGSpriteRow(std::span<u32, 8>{buffer.data() + tile_num * 8 - x_shift, 8}, tile[y % 8],
+                          background_palette);
+    }
+}
+
+__m256i Renderer::DecodeTile(u16 tile_row) {
     auto shift = _mm256_set_epi32(0, 1, 2, 3, 4, 5, 6, 7);
     auto low = _mm256_set1_epi32(tile_row >> 8);
     low = _mm256_srlv_epi32(low, shift);
@@ -69,18 +96,22 @@ void Renderer::RenderBGSpriteRow(std::span<u32, 8> pixels, u16 tile_row,
     auto high = _mm256_set1_epi32(tile_row << 1);
     high = _mm256_srlv_epi32(high, shift);
     high = _mm256_and_si256(high, _mm256_set1_epi32(0b10));
-    auto combined = _mm256_or_si256(low, high);
-    auto row = _mm256_permutevar8x32_epi32(palette_vec, combined);
-    _mm256_stream_si256(reinterpret_cast<__m256i*>(pixels.data()), row);
+    return _mm256_or_si256(low, high);
+}
+
+void Renderer::RenderBGSpriteRow(std::span<u32, 8> pixels, u16 tile_row, __m256i palette) {
+    auto combined = DecodeTile(tile_row);
+    auto row = _mm256_permutevar8x32_epi32(palette, combined);
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(pixels.data()), row);
 }
 
 void Renderer::Run() {
     while (!stop) {
         usize frame_count = frame_write_queue.read_available();
-        //if (!frame_count) {
-        //    std::this_thread::sleep_for(10us);
-        //    continue;
-        //}
+        if (!frame_count) {
+            std::this_thread::yield();
+            continue;
+        }
         // skip to most recent frame
         while (frame_count-- > 1)
             frame_write_queue.consume_one(
@@ -307,8 +338,8 @@ void Renderer::Presenter::Present() {
             blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
             blit.srcSubresource.layerCount = 1;
             blit.dstSubresource = blit.srcSubresource;
-            blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
-            blit.srcOffsets[1] = vk::Offset3D{PPU::WIDTH, PPU::HEIGHT, 1};
+            blit.srcOffsets[0] = vk::Offset3D{0, 1, 0};
+            blit.srcOffsets[1] = vk::Offset3D{PPU::WIDTH, PPU::HEIGHT + 1, 1};
             blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
             blit.dstOffsets[1] =
                 vk::Offset3D{static_cast<s32>(window_width), static_cast<s32>(window_height), 1};

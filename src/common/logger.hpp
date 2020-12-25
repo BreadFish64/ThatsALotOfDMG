@@ -92,8 +92,8 @@ constexpr std::string_view NormalizePath(std::string_view str) {
 #endif
 
 #define LOG(level, message, ...)                                                                   \
-    if constexpr (IS_DEBUG || ::CGB::Logger::LogLevel::level != ::CGB::Logger::LogLevel::Trace)    \
-        ::CGB::Logger::Log(::CGB::Logger::LogLevel::level, "{}:{} {}: " message "\n", NORM_PATH,   \
+    if constexpr (/*IS_DEBUG ||*/ ::CGB::Logger::LogLevel::level != ::CGB::Logger::LogLevel::Trace)    \
+        ::CGB::Logger::Log(::CGB::Logger::LogLevel::level, FMT_STRING("{}:{} {}: " message "\n"), NORM_PATH,   \
                            __LINE__, LOG_FUNC, __VA_ARGS__);
 
 #if IS_DEBUG

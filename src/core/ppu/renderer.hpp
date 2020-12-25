@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <immintrin.h>
+
 #include <boost/lockfree/spsc_queue.hpp>
 
 #include "common/types.hpp"
@@ -29,28 +31,22 @@ private:
     struct Frame {
         std::array<u32, 256 * 256> raw;
         auto Scanline(usize scanline) {
-            return std::span<u32, PPU::WIDTH>{raw.data() + scanline * 256, PPU::WIDTH};
+            return std::span<u32, PPU::WIDTH>{raw.data() + scanline * 256 + 256, PPU::WIDTH};
         }
     };
 
-    struct LcdRegs {
-        u8 control{0x91};
-        u8 stat{};
-        u8 scy{};
-        u8 scx{};
-        u8 ly{};
-        u8 lyc{};
-        u8 _dma{};
-        u8 bgp{0xFC};
-        u8 obp0{0xFF};
-        u8 obp1{0xFF};
-        u8 wy{};
-    } lcd;
-    PPU::OAM oam;
+    PPU::LcdRegs lcd;
+    struct Object {
+        u8 ypos{PPU::HEIGHT};
+        u8 xpos{};
+        u8 tile{};
+        u8 flags{};
+    };
+    std::array<Object, 0xA0 / sizeof(Object)> oam;
     std::vector<u8> vram = std::vector<u8>(0x4000);
 
     void RecieveLCDWrite(PPU::FrameWrites::LCDWrite lcd_write);
-    void RecieveOAMWrite(PPU::FrameWrites::OAM_DMA oam_write);
+    void RecieveOAMWrite(PPU::FrameWrites::OAMWrite oam_write);
     void RecieveVRAMWrite(PPU::FrameWrites::VRAMWrite lcd_write);
 
     class Presenter {
@@ -99,24 +95,31 @@ private:
     void SkipFrame(PPU::FrameWrites frame_writes);
     void RenderFrame(PPU::FrameWrites frame_writes);
 
-    std::array<u32, 4> GetBGP() {
+    void RenderBGScanline(unsigned scanline, std::span<u32, PPU::WIDTH>& buffer);
+    
+    static std::array<u32, 4> GetPalette(u8 reg) {
         static constexpr std::array<u32, 4> palette{0xFF'FF'FF'FF, 0xFF'AA'AA'AA, 0xFF'53'53'53,
                                                     0xFF'00'00'00};
-        return {palette[(lcd.bgp >> 0) & 0b11], palette[(lcd.bgp >> 2) & 0b11],
-                palette[(lcd.bgp >> 4) & 0b11], palette[(lcd.bgp >> 6) & 0b11]};
+        return {palette[(reg >> 0) & 0b11], palette[(reg >> 2) & 0b11], palette[(reg >> 4) & 0b11],
+                palette[(reg >> 6) & 0b11]};
     }
     unsigned GetBGTileIndex(unsigned x, unsigned y) {
         usize idx = y * 32 + x;
         idx += (lcd.control & 0x08) * (0x100 / 0x08);
         return vram[0x1800 + idx];
     }
-    auto GetTile(unsigned index) {
+    auto GetBGTile(unsigned index) {
         usize idx = index * 16;
         if (!(lcd.control & 0x10) && index < 0x80) idx += 0x1000;
         return std::span<const u16, 8>{reinterpret_cast<const u16*>(vram.data() + idx), 8};
     }
+    auto GetSpriteTile(unsigned index) {
+        usize idx = index * 16;
+        return std::span<const u16, 8>{reinterpret_cast<const u16*>(vram.data() + idx), 8};
+    }
+    static __m256i DecodeTile(u16 tile_row);
     void RenderBGSpriteRow(std::span<u32, 8> pixels, u16 tile_row,
-                           const std::array<u32, 4>& palette);
+                           __m256i palette);
 };
 
 } // namespace CGB::Core

@@ -81,8 +81,8 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
         });
     AttachIOHandler(0x01, serial_tag);
     auto input_tag = RegisterMemoryTag([]([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
-                                          [[maybe_unused]] u64 timestamp) -> u8 { return 0; },
-                                       WriteNop);
+                                         [[maybe_unused]] u64 timestamp) -> u8 { return ~0; },
+                                      WriteNop);
     AttachIOHandler(0x00, input_tag);
 
     LOG(Info, "All hardware installed onto bus");

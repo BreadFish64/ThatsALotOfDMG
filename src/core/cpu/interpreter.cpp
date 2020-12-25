@@ -22,6 +22,7 @@ void Interpreter::Install(Bus& bus) {
     bus.AttachIOHandler(0x0F, interrupt_reg_tag);
     bus.AttachIOHandler(0xFF, interrupt_reg_tag);
 }
+
 void Interpreter::Run() {
     PC = 0xFF;
     timestamp = 0;

@@ -54,10 +54,10 @@ class Interpreter : public BaseCPU {
     } flag;
     u16 SP{0xFFFE};
     u16 PC;
-    u64 timestamp;
-    bool IME = true;
-    u8 interrupt_enable;
-    u8 interrupt_flags;
+    u64 timestamp{0};
+    bool IME = false;
+    u8 interrupt_enable{0};
+    u8 interrupt_flags{0};
     boost::container::flat_map<u64, Event> schedule;
 
     static u8 InterruptRegReadHandler(Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp) {

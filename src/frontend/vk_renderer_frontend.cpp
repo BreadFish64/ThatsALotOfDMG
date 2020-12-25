@@ -7,7 +7,7 @@
 namespace CGB::Frontend::SDL2 {
 
 SDL2_VK_Frontend::SDL2_VK_Frontend() {
-    window = {SDL_CreateWindow("Vulkan", 2000, SDL_WINDOWPOS_CENTERED, 160 * 4,
+    window = {SDL_CreateWindow("Vulkan", -1000, SDL_WINDOWPOS_UNDEFINED, 160 * 4,
                                144 * 4, SDL_WINDOW_VULKAN),
               SDL_DestroyWindow};
     Vulkan::InitDispatcher(

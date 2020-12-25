@@ -24,9 +24,10 @@ public:
             u8 val;
             u8 scanline;
         };
-        struct OAM_DMA {
+        struct OAMWrite {
+            u8 offset;
+            u8 val;
             u8 scanline;
-            OAM data;
         };
         struct VRAMWrite {
             GADDR addr;
@@ -34,18 +35,33 @@ public:
             u8 scanline;
         };
         std::vector<LCDWrite> lcd_writes;
-        std::vector<OAM_DMA> oam_dmas;
+        std::vector<OAMWrite> oam_dmas;
         std::vector<VRAMWrite> vram_writes;
         void PushLCD(GADDR addr, u8 val, u64 timestamp);
-        void PushOAM(const OAM& oam, u64 timestamp);
+        void PushOAM(GADDR addr, u8 val, u64 timestamp);
         void PushVRAM(GADDR addr, u8 val, u64 timestamp);
         void Close();
     };
 
+    struct LcdRegs {
+        u8 control{0x91};
+        u8 stat{};
+        u8 scy{};
+        u8 scx{};
+        u8 ly{};
+        u8 lyc{};
+        u8 _dma{};
+        u8 bgp{0xFC};
+        u8 obp0{0xFF};
+        u8 obp1{0xFF};
+        u8 wy{};
+        u8 wx{};
+    };
+    u64 last_dma{0};
+
 private:
     OAM oam;
-    u8 lcdc;
-    u8 lyc;
+    LcdRegs lcd;
 
     FrameWrites frame_writes;
 
