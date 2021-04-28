@@ -41,9 +41,10 @@ void Renderer::RenderFrame(PPU::FrameWrites frame_writes) {
         auto buffer = frame.Scanline(scanline);
         RenderBGScanline(scanline, buffer);
         if (lcd.control & 0x02) {
-            alignas(__m256i) const std::array<std::array<u32, 4>, 2> palette_arr{GetPalette(lcd.obp0),
-                                                                           GetPalette(lcd.obp1)};
-            const auto palette = _mm256_load_si256(reinterpret_cast<const __m256i*>(palette_arr.data()));
+            alignas(__m256i) const std::array<std::array<u32, 4>, 2> palette_arr{
+                GetPalette(lcd.obp0), GetPalette(lcd.obp1)};
+            const auto palette =
+                _mm256_load_si256(reinterpret_cast<const __m256i*>(palette_arr.data()));
             const auto zero = _mm256_setzero_si256();
             const auto four = _mm256_set1_epi32(4);
             const auto reverse = _mm256_set_epi32(0, 1, 2, 3, 4, 5, 6, 7);
@@ -51,15 +52,15 @@ void Renderer::RenderFrame(PPU::FrameWrites frame_writes) {
                 // TODO: support 16 line sprites
                 signed tile_y = scanline - object.ypos + 16;
                 if (tile_y < 0 || tile_y > 7) continue;
-                if (object.flags & 0x80) LOG(Trace, "Unimplemented sprite priority");
                 if (object.flags & 0x40) tile_y = 7 - tile_y;
                 auto tile_row = DecodeTile(GetSpriteTile(object.tile)[tile_y]);
                 if (object.flags & 0x20) tile_row = _mm256_permutevar8x32_epi32(tile_row, reverse);
-                auto mask = _mm256_cmpgt_epi32(tile_row, zero);
+                auto address = reinterpret_cast<int*>(buffer.data() + object.xpos - 8);
+                auto mask = _mm256_cmpgt_epi32(
+                    (object.flags & 0x80) ? _mm256_loadu_si256(reinterpret_cast<const __m256i*>(address)) : tile_row, zero);
                 if (object.flags & 0x10) tile_row = _mm256_add_epi32(tile_row, four);
                 auto row = _mm256_permutevar8x32_epi32(palette, tile_row);
-                _mm256_maskstore_epi32(reinterpret_cast<int*>(buffer.data() + object.xpos - 8),
-                                        mask, row);
+                _mm256_maskstore_epi32(address, mask, row);
             }
         }
     }
@@ -380,9 +381,9 @@ void Renderer::Presenter::Present() {
             present_info.swapchainCount = 1;
             present_info.pSwapchains = &*swapchain;
             present_info.pImageIndices = &image_index;
-            queue.presentKHR(present_info);
+            (void)queue.presentKHR(present_info);
         }
-        device->waitForFences(*blit_fence, true, std::numeric_limits<std::uint64_t>::max());
+        (void)device->waitForFences(*blit_fence, true, std::numeric_limits<std::uint64_t>::max());
 
         presenting_frame = -(presenting_frame);
     }
