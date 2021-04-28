@@ -56,11 +56,12 @@ int main(int argc, const char** argv) {
         if (cpu_speed_callback) cpu_speed += cpu_speed_callback();
         if (renderer_speed_callback) renderer_speed += renderer_speed_callback();
         ++perf_count;
-        if (perf_count == 1000) {
+        constexpr unsigned perf_interval = 200;
+        if (perf_count == perf_interval) {
             perf_count = 0;
-            cpu_speed /= 1000;
-            renderer_speed /= 1000;
-            auto title = fmt::format("Frame time CPU: {}fps PPU: {}",
+            cpu_speed /= perf_interval;
+            renderer_speed /= perf_interval;
+            auto title = fmt::format(FMT_STRING("CPU: {:.1f}fps PPU: {}"),
                                      1 / std::chrono::duration<double>{cpu_speed}.count(),
                                      std::chrono::duration<double, std::micro>{renderer_speed});
             SDL_SetWindowTitle(render_frontend->GetWindow(), title.data());
