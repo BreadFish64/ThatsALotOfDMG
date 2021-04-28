@@ -30,10 +30,10 @@ void Interpreter::Run() {
     auto prev_frame = start;
     schedule.emplace(PPU::HEIGHT * PPU::SCANLINE_CYCLES, Event::VBlank);
     while (true) {
-        while (timestamp < schedule.begin()->first) [[likely]] {
-                u8 opcode = Imm8();
-                JUMP_TABLE[opcode](*this, opcode);
-            }
+        if (timestamp < schedule.begin()->first) {
+            [[likely]] u8 opcode = Imm8();
+            JUMP_TABLE[opcode](*this, opcode);
+        }
         auto [t, event] = std::move(*schedule.begin());
         schedule.erase(schedule.begin());
         switch (event) {

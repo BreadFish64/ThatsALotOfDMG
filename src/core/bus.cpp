@@ -23,6 +23,13 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
       ppu{std::move(_ppu)}, timer{std::make_unique<Timer>()}, tag_backing{TAG_TYPES::SIZE} {
 
     LOG(Info, "Installing WRAM on bus");
+    auto echo_tag = RegisterMemoryTag(
+        [](Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp) -> u8 {
+            return bus.Memory()[addr - PAGE_SIZE * 2];
+        },
+        [](Bus& bus, GADDR addr, u8 val, [[maybe_unused]] u64 timestamp) {
+            bus.Memory()[addr - PAGE_SIZE * 2] = val;
+        });
     {
         auto tag_data = tag_backing.Map(0, 0, Common::VirtualMemory::PROTECTION::READ_WRITE);
         // Generate tag data
@@ -33,9 +40,9 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
             MemoryTag{.read = false, .write = false, .handler = 0});
         {
             auto io_tags = tag_data.Span<MemoryTag>().subspan<TAG_TYPES::IO, Bus::PAGE_SIZE>();
-            std::ranges::fill(io_tags.first<0xE00>(),
-                              MemoryTag{.read = false, .write = false, .handler = 0});
-            std::ranges::fill(io_tags.last<0x100>(),
+            // TODO: echo RAM in 0xE000-0xEFFF
+            std::ranges::fill(io_tags.first<0xE00>(), echo_tag);
+            std::ranges::fill(io_tags.subspan<0xF00, 0x80>(),
                               MemoryTag{.read = true, .write = true, .handler = 0});
         }
     }
@@ -53,18 +60,14 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
         address_space.Split(offset, PAGE_SIZE);
 
     // Create backing memory for WRAM
-    wram_backing = Common::VirtualMemory::MemoryBacking{PAGE_SIZE * 8};
-    fixed_wram[0] = wram_backing.Map(
-        0x0000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xC000);
-    fixed_wram[1] = wram_backing.Map(
-        0x1000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xE000);
-    switchable_wram[0] = wram_backing.Map(
+    wram_backing = Common::VirtualMemory::MemoryBacking{PAGE_SIZE * 9};
+    fixed_wram = wram_backing.Map(0x0000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE,
+                                  address_space, 0xC000);
+    switchable_wram = wram_backing.Map(
         0x1000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xD000);
-    switchable_wram[1] = wram_backing.Map(
-        0x1000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xF000);
 
-    auto HRAM_tag = RegisterMemoryTag(ReadHRAM, WriteHRAM);
-    for (u8 offset = 0x80; offset < 0xFF; ++offset) { AttachIOHandler(offset, HRAM_tag); }
+    hram = wram_backing.Map(0x8000, PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE,
+                            address_space, 0xF000);
 
     cartridge->Install(*this);
     cpu.Install(*this);
@@ -81,8 +84,8 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
         });
     AttachIOHandler(0x01, serial_tag);
     auto input_tag = RegisterMemoryTag([]([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
-                                         [[maybe_unused]] u64 timestamp) -> u8 { return ~0; },
-                                      WriteNop);
+                                          [[maybe_unused]] u64 timestamp) -> u8 { return ~0; },
+                                       WriteNop);
     AttachIOHandler(0x00, input_tag);
 
     LOG(Info, "All hardware installed onto bus");
@@ -109,12 +112,9 @@ Common::VirtualMemory::ReservedMappedSection Bus::MapPassthroughTag(u8 page) {
 
 void Bus::SwitchWRAMBank(u8 index) {
     switchable_wram = {};
-    switchable_wram[0] =
+    switchable_wram =
         wram_backing.Map(index * PAGE_SIZE, PAGE_SIZE,
                          Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xD000);
-    switchable_wram[1] =
-        wram_backing.Map(index * PAGE_SIZE, PAGE_SIZE,
-                         Common::VirtualMemory::PROTECTION::READ_WRITE, address_space, 0xF000);
 }
 
 MemoryTag Bus::RegisterMemoryTag(ReadHandler read_handler, WriteHandler write_handler) {

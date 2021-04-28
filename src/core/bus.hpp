@@ -40,14 +40,6 @@ private:
     static u8 ReadNop(Bus& bus, GADDR addr, u64 timestamp);
     static void WriteNop(Bus& bus, GADDR addr, u8 val, u64 timestamp);
 
-    std::array<u8, 0x80> HRAM;
-    static u8 ReadHRAM(Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp) {
-        return bus.HRAM[addr - 0xFF80];
-    };
-    static void WriteHRAM(Bus& bus, GADDR addr, u8 val, [[maybe_unused]] u64 timestamp) {
-        bus.HRAM[addr - 0xFF80] = val;
-    };
-
     std::array<ReadHandler, 1 << 6> read_handlers{ReadNop};
     std::array<WriteHandler, 1 << 6> write_handlers{WriteNop};
     usize memory_handler_count{1};
@@ -60,8 +52,9 @@ private:
     std::unique_ptr<Timer> timer;
 
     Common::VirtualMemory::MemoryBacking wram_backing;
-    std::array<Common::VirtualMemory::ReservedMappedSection, 2> fixed_wram;
-    std::array<Common::VirtualMemory::ReservedMappedSection, 2> switchable_wram;
+    Common::VirtualMemory::ReservedMappedSection fixed_wram;
+    Common::VirtualMemory::ReservedMappedSection switchable_wram;
+    Common::VirtualMemory::ReservedMappedSection hram;
 
     Common::VirtualMemory::MemoryBacking tag_backing;
     std::array<Common::VirtualMemory::ReservedMappedSection, 4> wram_tags;

@@ -10,7 +10,7 @@
 // These macros were a mistake and I'm sorry to anyone trying to understand them
 #define TABLE_FILL(operation, base, shift, bits)                                                   \
     [&table]<u8... idx>(u8 _base, u8 _shift, std::integer_sequence<u8, idx...>) {                  \
-        ((table[_base | (idx << _shift)] = Devirtualize<&Interpreter::operation<idx>>), ...);      \
+        ((table[_base | (idx << _shift)] = TailCallInstr<&Interpreter::operation<idx>>), ...);      \
     }                                                                                              \
     (base, shift, std::make_integer_sequence<u8, 1 << bits>());
 #define DOUBLE_TABLE_FILL(operation, base, shift1, bits1, shift2, bits2)                           \
@@ -19,7 +19,7 @@
         const auto helper = [&table]<u8 left, u8... right>(u8 _base, u8 _shift,                    \
                                                            std::integer_sequence<u8, right...>) {  \
             ((table[_base | (right << _shift)] =                                                   \
-                  Devirtualize<&Interpreter::operation<left, right>>),                             \
+                  TailCallInstr<&Interpreter::operation<left, right>>),                             \
              ...);                                                                                 \
         };                                                                                         \
         ((helper.template operator()<idx1>(_base | (idx1 << _shift1), _shift2, count2)), ...);     \
@@ -29,7 +29,7 @@
 
 namespace CGB::Core::CPU {
 
-class Interpreter : public BaseCPU {
+class Interpreter final : public BaseCPU {
     union {
         std::array<u8, 8> reg_arr;
         struct {
@@ -130,7 +130,11 @@ class Interpreter : public BaseCPU {
         timestamp += 4;
     }
 
-    u8 Imm8() { return Load(++PC); }
+    u8 Imm8() {
+        u8 val = bus->Memory()[++PC];
+        timestamp += 4;
+        return val;
+    }
 
     u16 Imm16() { return u16{Imm8()} | (u16{Imm8()} << 8); }
 
@@ -693,6 +697,7 @@ class Interpreter : public BaseCPU {
     }
     static constexpr std::array<Opcode, 256> CB_TABLE = []() constexpr {
         std::array<Opcode, 256> table{};
+#define TailCallInstr Devirtualize
         DOUBLE_TABLE_FILL(ShiftRot_r8, 0b00'000'000, 3, 3, 0, 3);
         for (u8 base = 0b01'000'000; base != 0b10'000'000; base += 0b00'001'000)
             TABLE_FILL(BIT_u3_r8, base, 0, 3);
@@ -700,6 +705,7 @@ class Interpreter : public BaseCPU {
             TABLE_FILL(RES_u3_r8, base, 0, 3);
         for (u8 base = 0b11'000'000; base != 0b00'000'000; base += 0b00'001'000)
             TABLE_FILL(SET_u3_r8, base, 0, 3);
+#undef TailCallInstr
         return table;
     }
     ();
@@ -750,13 +756,21 @@ class Interpreter : public BaseCPU {
         Jump(braddr);
     }
 
+    template <void (Interpreter::*handler)(u8)>
+    [[gnu::flatten]] static void TailCallInstr(Interpreter& state, u8 arg) {
+        (state.*handler)(arg);
+        if (state.timestamp >= state.schedule.begin()->first) return;
+        [[likely]] u8 opcode = state.Imm8();
+        JUMP_TABLE[opcode](state, opcode);
+    }
+
     static constexpr std::array<Opcode, 256> JUMP_TABLE = []() constexpr {
         std::array<Opcode, 256> table{};
-        std::ranges::fill(table, Devirtualize<&Interpreter::UnimplementedOpcode>);
-        table[0b00000000] = Devirtualize<&Interpreter::NOP>;
-        table[0b00001000] = Devirtualize<&Interpreter::LD_u16addr_SP>;
-        // table[0b00010000] =  Devirtualize< &Interpreter::STOP >;
-        table[0b00011000] = Devirtualize<&Interpreter::JR_s8>;
+        std::ranges::fill(table, TailCallInstr<&Interpreter::UnimplementedOpcode>);
+        table[0b00000000] = TailCallInstr<&Interpreter::NOP>;
+        table[0b00001000] = TailCallInstr<&Interpreter::LD_u16addr_SP>;
+        // table[0b00010000] =  TailCallInstr< &Interpreter::STOP >;
+        table[0b00011000] = TailCallInstr<&Interpreter::JR_s8>;
         TABLE_FILL(JR_cond_s8, 0b001'00'000, 3, 2);
         TABLE_FILL(LD_r16_u16, 0b00'00'0001, 4, 2);
         TABLE_FILL(ADD_HL_r16, 0b00'00'1001, 4, 2);
@@ -767,39 +781,39 @@ class Interpreter : public BaseCPU {
         TABLE_FILL(INC_r8, 0b00'000'100, 3, 3);
         TABLE_FILL(DEC_r8, 0b00'000'101, 3, 3);
         TABLE_FILL(LD_r8_u8, 0b00'000'110, 3, 3);
-        table[0b00'000'111] = Devirtualize<&Interpreter::RLC_A>;
-        table[0b00'001'111] = Devirtualize<&Interpreter::RRC_A>;
-        table[0b00'010'111] = Devirtualize<&Interpreter::RL_A>;
-        table[0b00'011'111] = Devirtualize<&Interpreter::RR_A>;
-        table[0b00'100'111] = Devirtualize<&Interpreter::DAA>;
-        table[0b00'101'111] = Devirtualize<&Interpreter::CPL_A>;
-        table[0b00'110'111] = Devirtualize<&Interpreter::SCF>;
-        table[0b00'111'111] = Devirtualize<&Interpreter::CCF>;
+        table[0b00'000'111] = TailCallInstr<&Interpreter::RLC_A>;
+        table[0b00'001'111] = TailCallInstr<&Interpreter::RRC_A>;
+        table[0b00'010'111] = TailCallInstr<&Interpreter::RL_A>;
+        table[0b00'011'111] = TailCallInstr<&Interpreter::RR_A>;
+        table[0b00'100'111] = TailCallInstr<&Interpreter::DAA>;
+        table[0b00'101'111] = TailCallInstr<&Interpreter::CPL_A>;
+        table[0b00'110'111] = TailCallInstr<&Interpreter::SCF>;
+        table[0b00'111'111] = TailCallInstr<&Interpreter::CCF>;
         DOUBLE_TABLE_FILL(LD_r8_r8, 0b01'000'000, 3, 3, 0, 3);
-        table[0b01'110'110] = Devirtualize<&Interpreter::HALT>;
+        table[0b01'110'110] = TailCallInstr<&Interpreter::HALT>;
         DOUBLE_TABLE_FILL(ALU_A_r8, 0b10'000'000, 3, 3, 0, 3);
         TABLE_FILL(RET_cond, 0b110'00'000, 3, 2);
-        table[0b11100000] = Devirtualize<&Interpreter::LDIO_u8addr_A>;
-        table[0b11101000] = Devirtualize<&Interpreter::ADD_SP_s8>;
-        table[0b11110000] = Devirtualize<&Interpreter::LDIO_A_u8addr>;
-        table[0b11111000] = Devirtualize<&Interpreter::LD_HL_SP_s8>;
+        table[0b11100000] = TailCallInstr<&Interpreter::LDIO_u8addr_A>;
+        table[0b11101000] = TailCallInstr<&Interpreter::ADD_SP_s8>;
+        table[0b11110000] = TailCallInstr<&Interpreter::LDIO_A_u8addr>;
+        table[0b11111000] = TailCallInstr<&Interpreter::LD_HL_SP_s8>;
         TABLE_FILL(POP_r16, 0b11'00'0001, 4, 2);
-        table[0b11'00'1001] = Devirtualize<&Interpreter::RET>;
-        table[0b11'01'1001] = Devirtualize<&Interpreter::RETI>;
-        table[0b11'10'1001] = Devirtualize<&Interpreter::JP_HL>;
-        table[0b11'11'1001] = Devirtualize<&Interpreter::LD_SP_HL>;
+        table[0b11'00'1001] = TailCallInstr<&Interpreter::RET>;
+        table[0b11'01'1001] = TailCallInstr<&Interpreter::RETI>;
+        table[0b11'10'1001] = TailCallInstr<&Interpreter::JP_HL>;
+        table[0b11'11'1001] = TailCallInstr<&Interpreter::LD_SP_HL>;
         TABLE_FILL(JP_cond_u16, 0b110'00'010, 3, 2);
-        table[0b11100010] = Devirtualize<&Interpreter::LDIO_Caddr_A>;
-        table[0b11101010] = Devirtualize<&Interpreter::LD_u16addr_A>;
-        table[0b11110010] = Devirtualize<&Interpreter::LDIO_A_Caddr>;
-        table[0b11111010] = Devirtualize<&Interpreter::LD_A_u16addr>;
-        table[0b11'000'011] = Devirtualize<&Interpreter::JP_u16>;
-        table[0b11'001'011] = Devirtualize<&Interpreter::CB_prefix>;
-        table[0b11'110'011] = Devirtualize<&Interpreter::DI>;
-        table[0b11'111'011] = Devirtualize<&Interpreter::EI>;
+        table[0b11100010] = TailCallInstr<&Interpreter::LDIO_Caddr_A>;
+        table[0b11101010] = TailCallInstr<&Interpreter::LD_u16addr_A>;
+        table[0b11110010] = TailCallInstr<&Interpreter::LDIO_A_Caddr>;
+        table[0b11111010] = TailCallInstr<&Interpreter::LD_A_u16addr>;
+        table[0b11'000'011] = TailCallInstr<&Interpreter::JP_u16>;
+        table[0b11'001'011] = TailCallInstr<&Interpreter::CB_prefix>;
+        table[0b11'110'011] = TailCallInstr<&Interpreter::DI>;
+        table[0b11'111'011] = TailCallInstr<&Interpreter::EI>;
         TABLE_FILL(CALL_cond_u16, 0b110'00'100, 3, 2);
         TABLE_FILL(PUSH_r16, 0b11'00'0101, 4, 2);
-        table[0b11001101] = Devirtualize<&Interpreter::CALL_u16>;
+        table[0b11001101] = TailCallInstr<&Interpreter::CALL_u16>;
         TABLE_FILL(ALU_A_u8, 0b11'000'110, 3, 3);
         TABLE_FILL(RST, 0b11'000'111, 3, 3);
         return table;
