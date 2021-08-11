@@ -5,6 +5,7 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <string_view>
 #include <thread>
@@ -28,7 +29,7 @@ enum class LogLevel {
     Critical,
 };
 
-using DeferredLog = std::function<std::pair<LogLevel, std::string>()>;
+using DeferredLog = std::future<std::pair<LogLevel, std::string>>;
 using LogQueue = boost::lockfree::queue<DeferredLog*>;
 
 class Logger {
@@ -55,10 +56,12 @@ std::string FormatLog(std::tuple<Args...> args, std::index_sequence<idx...>) {
 
 template <typename... Args>
 void Log(LogLevel level, Args... args) {
-    auto log = new DeferredLog{[level, args = std::make_tuple(args...)] {
-        return std::make_pair(level,
-                              FormatLog(std::move(args), std::index_sequence_for<Args...>{}));
-    }};
+    auto log = new DeferredLog{std::async(
+        std::launch::deferred,
+        [](auto level, auto... fmt_args) {
+            return std::make_pair(level, fmt::format(std::move(fmt_args)...));
+        },
+        level, args...)};
     if constexpr (IS_DEBUG) {
         logger.ConsumeLog(log);
     } else {
@@ -92,9 +95,10 @@ constexpr std::string_view NormalizePath(std::string_view str) {
 #endif
 
 #define LOG(level, message, ...)                                                                   \
-    if constexpr (/*IS_DEBUG ||*/ ::CGB::Logger::LogLevel::level != ::CGB::Logger::LogLevel::Trace)    \
-        ::CGB::Logger::Log(::CGB::Logger::LogLevel::level, FMT_STRING("{}:{} {}: " message "\n"), NORM_PATH,   \
-                           __LINE__, LOG_FUNC, __VA_ARGS__);
+    if constexpr (/*IS_DEBUG ||*/ ::CGB::Logger::LogLevel::level !=                                \
+                  ::CGB::Logger::LogLevel::Trace)                                                  \
+        ::CGB::Logger::Log(::CGB::Logger::LogLevel::level, FMT_STRING("{}:{} {}: " message "\n"),  \
+                           NORM_PATH, __LINE__, LOG_FUNC, __VA_ARGS__);
 
 #if IS_DEBUG
 #define UNREACHABLE() std::abort()

@@ -11,7 +11,7 @@ static constexpr std::array LEVEL_NAMES{
 };
 
 void Logger::ConsumeLog(DeferredLog* log) {
-    auto [level, str] = (*log)();
+    auto [level, str] = log->get();
     delete log;
     if (level > LogLevel::Trace) fmt::print(LEVEL_STYLES[static_cast<usize>(level)], str);
     fmt::print(log_file, "{}:\t{}", LEVEL_NAMES[static_cast<usize>(level)], str);
