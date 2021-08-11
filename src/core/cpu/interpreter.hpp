@@ -759,9 +759,12 @@ class Interpreter final : public BaseCPU {
     template <void (Interpreter::*handler)(u8)>
     [[gnu::flatten]] static void TailCallInstr(Interpreter& state, u8 arg) {
         (state.*handler)(arg);
-        if (state.timestamp >= state.schedule.begin()->first) return;
-        [[likely]] u8 opcode = state.Imm8();
-        JUMP_TABLE[opcode](state, opcode);
+        if (state.timestamp < state.schedule.begin()->first) {
+            [[likely]] 
+            u8 opcode = state.Imm8();
+            JUMP_TABLE[opcode](state, opcode);
+        }
+        [[clang::musttail]] return;
     }
 
     static constexpr std::array<Opcode, 256> JUMP_TABLE = []() constexpr {
