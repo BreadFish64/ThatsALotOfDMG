@@ -11,10 +11,13 @@ static constexpr std::array LEVEL_NAMES{
 };
 
 void Logger::ConsumeLog(DeferredLog* log) {
-    auto [level, str] = log->get();
+    LogLevel level = LogLevel::Critical;
+    fmt::memory_buffer buffer;
+    (*log)(level, buffer);
+    std::string_view message{buffer.data(), buffer.size()};
+    if (level > LogLevel::Trace) fmt::print(LEVEL_STYLES[static_cast<usize>(level)], "{}", message);
+    fmt::print(log_file, "{:8}:\t{}", LEVEL_NAMES[static_cast<usize>(level)], message);
     delete log;
-    if (level > LogLevel::Trace) fmt::print(LEVEL_STYLES[static_cast<usize>(level)], str);
-    fmt::print(log_file, "{}:\t{}", LEVEL_NAMES[static_cast<usize>(level)], str);
 }
 
 void Logger::ConsumeLogs() {
@@ -26,7 +29,7 @@ void Logger::ConsumeLogs() {
 }
 
 Logger::Logger() {
-    log_file = std::ofstream{"log.txt"};
+    fopen_s(&log_file, "log.txt", "w");
 
     if constexpr (!IS_DEBUG) {
         run_logger = true;
@@ -42,6 +45,7 @@ Logger::~Logger() {
             ;
         logging_thread.join();
     }
+    std::fclose(log_file);
 }
 
 } // namespace CGB::Logger

@@ -5,22 +5,22 @@
 
 namespace CGB::Core {
 void PPU::FrameWrites::PushLCD(GADDR addr, u8 val, u64 timestamp) {
-    u8 offset = addr - 0xFF40;
+    u8 offset = static_cast<u8>(addr - 0xFF40);
     u32 dot = timestamp % FRAME_CYCLES;
-    u8 scanline = dot / SCANLINE_CYCLES;
+    u8 scanline = static_cast<u8>(dot / SCANLINE_CYCLES);
     lcd_writes.emplace_back(LCDWrite{.index = offset, .val = val, .scanline = scanline});
 }
 
 void PPU::FrameWrites::PushOAM(GADDR addr, u8 val, u64 timestamp) {
     u32 dot = timestamp % FRAME_CYCLES;
-    u8 scanline = dot / SCANLINE_CYCLES;
+    u8 scanline = static_cast<u8>(dot / SCANLINE_CYCLES);
     oam_dmas.emplace_back(
         OAMWrite{.offset = static_cast<u8>(addr), .val = val, .scanline = scanline});
 }
 
 void PPU::FrameWrites::PushVRAM(GADDR addr, u8 val, u64 timestamp) {
     u32 dot = timestamp % FRAME_CYCLES;
-    u8 scanline = (dot + (SCANLINE_CYCLES - 80)) / SCANLINE_CYCLES;
+    u8 scanline = static_cast<u8>((dot + (SCANLINE_CYCLES - 80)) / SCANLINE_CYCLES);
     vram_writes.emplace_back(VRAMWrite{.addr = addr, .val = val, .scanline = scanline});
 }
 
@@ -28,6 +28,12 @@ void PPU::FrameWrites::Close() {
     lcd_writes.emplace_back(LCDWrite{.scanline = static_cast<u8>(~0)});
     oam_dmas.emplace_back(OAMWrite{.scanline = static_cast<u8>(~0)});
     vram_writes.emplace_back(VRAMWrite{.scanline = static_cast<u8>(~0)});
+}
+
+void PPU::FrameWrites::Clear() {
+    lcd_writes.clear();
+    oam_dmas.clear();
+    vram_writes.clear();
 }
 
 void PPU::VRAMWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
@@ -83,7 +89,7 @@ u8 PPU::LCDReadHandler([[maybe_unused]] Bus& bus, GADDR addr, u64 timestamp) {
     case 0xFF49: return ppu.lcd.obp1;
     default:
         LOG(Error, "Unimplemented LCD Register read {:#06X} on cycle {}", addr, timestamp);
-        return ~0;
+        return static_cast<u8>(~0);
     };
 }
 
@@ -107,12 +113,21 @@ void PPU::LCDWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
         ppu.frame_writes.PushLCD(addr, val, timestamp);
     } break;
     case 0xFF45: {
-        LOG(Warning, "Stat interrupts are unimplemented");
         ppu.lcd.lyc = val;
+        const u64 scheduled_cycle_in_frame = static_cast<u64>(ppu.lcd.lyc) * PPU::SCANLINE_CYCLES;
+        const u64 current_cycle_in_frame = timestamp % PPU::FRAME_CYCLES;
+        const u64 frame_start = timestamp - current_cycle_in_frame;
+        const u64 frame_start_schedule_offset = scheduled_cycle_in_frame +
+                (current_cycle_in_frame > scheduled_cycle_in_frame ? PPU::FRAME_CYCLES : 0);
+        auto& cpu = bus.GetCPU();
+        cpu.DescheduleEvent(Event::LCD_STAT_LYC_IS_LY);
+        cpu.ScheduleEvent(
+            frame_start + frame_start_schedule_offset,
+            Event::LCD_STAT_LYC_IS_LY);
     } break;
     case 0xFF46: {
         auto src = static_cast<GADDR>(val) << 8;
-        for (usize i{0}; i < ppu.oam.size(); ++i) {
+        for (GADDR i{0}; i < ppu.oam.size(); ++i) {
             ppu.WriteOAM(0xFE00 + i, bus.Memory()[src + i], timestamp);
         }
         ppu.last_dma = timestamp;
@@ -147,30 +162,30 @@ void PPU::LCDWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
 PPU::PPU(std::unique_ptr<Renderer> renderer) : renderer{std::move(renderer)} {}
 PPU::~PPU() {}
 
-void PPU::Install(Bus& bus) {
+void PPU::Install(Bus& _bus) {
     LOG(Info, "Installing PPU on bus");
-    this->bus = &bus;
+    this->bus = &_bus;
 
     vram_backing = Common::VirtualMemory::MemoryBacking{Bus::PAGE_SIZE * 4};
-    bus.GetAddressSpace().Split(0x8000, Bus::PAGE_SIZE * 2);
+    bus->GetAddressSpace().Split(0x8000, Bus::PAGE_SIZE * 2);
     vram =
         vram_backing.Map(0x0000, Bus::PAGE_SIZE * 2, Common::VirtualMemory::PROTECTION::READ_WRITE,
-                         bus.GetAddressSpace(), 0x8000);
+                         bus->GetAddressSpace(), 0x8000);
     vram_tag_backing = Common::VirtualMemory::MemoryBacking{Bus::PAGE_SIZE};
-    bus.GetAddressSpace().Split(Bus::ADDRESS_SPACE + 0x8000, Bus::PAGE_SIZE);
-    bus.GetAddressSpace().Split(Bus::ADDRESS_SPACE + 0x9000, Bus::PAGE_SIZE);
+    bus->GetAddressSpace().Split(Bus::ADDRESS_SPACE + 0x8000, Bus::PAGE_SIZE);
+    bus->GetAddressSpace().Split(Bus::ADDRESS_SPACE + 0x9000, Bus::PAGE_SIZE);
     vram_tags[0] =
         vram_tag_backing.Map(0, Bus::PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE,
-                             bus.GetAddressSpace(), Bus::ADDRESS_SPACE + 0x8000);
+                             bus->GetAddressSpace(), Bus::ADDRESS_SPACE + 0x8000);
     vram_tags[1] =
         vram_tag_backing.Map(0, Bus::PAGE_SIZE, Common::VirtualMemory::PROTECTION::READ_WRITE,
-                             bus.GetAddressSpace(), Bus::ADDRESS_SPACE + 0x9000);
-    auto VRAM_tag = bus.RegisterMemoryTag(nullptr, VRAMWriteHandler);
+                             bus->GetAddressSpace(), Bus::ADDRESS_SPACE + 0x9000);
+    auto VRAM_tag = bus->RegisterMemoryTag(nullptr, VRAMWriteHandler);
     std::ranges::fill(vram_tags[0].Span<MemoryTag>(), VRAM_tag);
-    auto OAM_tag = bus.RegisterMemoryTag(OAMReadHandler, OAMWriteHandler);
-    std::ranges::fill(bus.Tags().subspan<0xFE00, 0xA0>(), OAM_tag);
-    auto LCD_tag = bus.RegisterMemoryTag(LCDReadHandler, LCDWriteHandler);
-    for (u8 io = 0x40; io <= 0x4B; ++io) bus.AttachIOHandler(io, LCD_tag);
+    auto OAM_tag = bus->RegisterMemoryTag(OAMReadHandler, OAMWriteHandler);
+    std::ranges::fill(bus->Tags().subspan<0xFE00, 0xA0>(), OAM_tag);
+    auto LCD_tag = bus->RegisterMemoryTag(LCDReadHandler, LCDWriteHandler);
+    for (u8 io = 0x40; io <= 0x4B; ++io) bus->AttachIOHandler(io, LCD_tag);
 }
 
 void PPU::VBlank(u64 timestamp) {
@@ -179,6 +194,13 @@ void PPU::VBlank(u64 timestamp) {
                                 Event::VBlank);
     renderer->RecieveFrameWrites(std::move(frame_writes));
     frame_writes = {};
+}
+
+void PPU::LCD_STAT_LYC_IS_LY(u64 timestamp) {
+    const u64 current_cycle_in_frame = timestamp % FRAME_CYCLES;
+    const u64 scheduled_timestamp = timestamp - current_cycle_in_frame + FRAME_CYCLES +
+                                    (static_cast<u64>(lcd.lyc) * SCANLINE_CYCLES);
+    bus->GetCPU().ScheduleEvent(scheduled_timestamp, Event::LCD_STAT_LYC_IS_LY);
 }
 
 } // namespace CGB::Core

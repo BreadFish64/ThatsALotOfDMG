@@ -25,7 +25,7 @@ inline VKAPI_ATTR vk::Bool32 VKAPI_CALL
 VulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                     [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT messageType,
                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
-    auto severity_idx = __builtin_ctz(messageSeverity) / 4;
+    auto severity_idx = std::countr_zero(static_cast<unsigned>(messageSeverity)) / 4;
     std::array severity_colors{fmt::color::gray, fmt::color::white, fmt::color::yellow,
                                fmt::color::red};
     fmt::print(fmt::fg(severity_colors[severity_idx]), "{}\n", pCallbackData->pMessage);

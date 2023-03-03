@@ -103,7 +103,6 @@ void MBC5::RamEnableHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
 
         return;
     }
-    UNREACHABLE();
 }
 
 void MBC5::RomBankNumberHandler(Bus& bus, GADDR addr, u8 val,
@@ -114,7 +113,7 @@ void MBC5::RomBankNumberHandler(Bus& bus, GADDR addr, u8 val,
     } else {
         cartridge.bank_number_low = val;
     }
-    u8 bank = (static_cast<usize>(cartridge.bank_number_high) << 8) | cartridge.bank_number_low;
+    unsigned bank = static_cast<unsigned>(cartridge.bank_number_high) << 8 | cartridge.bank_number_low;
     cartridge.switchable_rom = {};
     cartridge.switchable_rom = cartridge.rom_backing.Map(
         bank * Bus::PAGE_SIZE * 4, Bus::PAGE_SIZE * 4,

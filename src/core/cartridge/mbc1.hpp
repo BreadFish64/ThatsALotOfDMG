@@ -21,6 +21,9 @@ class MBC1 : public SpecializedCartridge {
     u8 ram_bank_number = 0x00;
     u8 banking_mode_select = 0x00;
 
+    u8 rom_bank_count = 0;
+    u8 rom_bank_mask = 0x1F;
+
     Common::VirtualMemory::MappedFile ram_file_handle;
     Common::VirtualMemory::MemoryBacking ram_backing;
     Common::VirtualMemory::ReservedMappedSection fixed_rom;

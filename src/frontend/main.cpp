@@ -18,6 +18,7 @@ int main(int argc, const char** argv) {
     std::span<const char*> args{argv, static_cast<std::size_t>(argc)};
     if (args.size() < 2) return 1;
     std::filesystem::path game = args[1];
+    if (!std::filesystem::is_regular_file(game)) return 1;
 
     auto cartridge = std::make_unique<CGB::Core::CartridgeHeader>(game);
     LOG(Info, "Title: {}", cartridge->Title());
@@ -25,7 +26,7 @@ int main(int argc, const char** argv) {
         cartridge->HashHeader());
     LOG(Info, "ROM Checksum: {:#06X} Hash: {:#06X}", cartridge->GlobalChecksum(),
         cartridge->HashROM());
-    LOG(Info, "CartridgeType {:#04X}", cartridge->CartridgeType(), cartridge->HashROM());
+    LOG(Info, "CartridgeType {:#04X}", CGB::underlying_cast(cartridge->CartridgeType()));
 
     auto _render_frontend = std::make_unique<CGB::Frontend::SDL2::SDL2_VK_Frontend>();
     auto render_frontend = _render_frontend.get();
@@ -43,7 +44,8 @@ int main(int argc, const char** argv) {
             bus.GetCPU().Run();
         },
         std::move(cartridge), std::move(_render_frontend)};
-    std::chrono::nanoseconds cpu_speed, renderer_speed;
+    std::string title;
+    std::chrono::nanoseconds cpu_speed{}, renderer_speed{};
     CGB::u64 perf_count{0};
     while (true) {
         SDL_Event event;
@@ -61,7 +63,7 @@ int main(int argc, const char** argv) {
             perf_count = 0;
             cpu_speed /= perf_interval;
             renderer_speed /= perf_interval;
-            auto title = fmt::format(FMT_STRING("CPU: {:.1f}fps PPU: {}"),
+            title = fmt::format(FMT_STRING("CPU: {:.1f}fps PPU: {}"),
                                      1 / std::chrono::duration<double>{cpu_speed}.count(),
                                      std::chrono::duration<double, std::micro>{renderer_speed});
             SDL_SetWindowTitle(render_frontend->GetWindow(), title.data());

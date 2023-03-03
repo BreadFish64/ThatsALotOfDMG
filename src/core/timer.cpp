@@ -6,7 +6,7 @@ namespace CGB::Core {
 u8 Timer::TimerReadHandler(Bus& bus, GADDR addr, u64 timestamp) {
     auto timer = bus.GetTimer();
     switch (addr) {
-    case 0xFF04: return timestamp - timer.last_reset;
+    case 0xFF04: return static_cast<u8>(timestamp - timer.last_reset);
     case 0xFF05: return (timer.tac & 0b100) ? timer.ReadTIMA(timestamp) : timer.tima;
     case 0xFF06: return timer.tma;
     case 0xFF07: return timer.tac;
@@ -30,8 +30,8 @@ void Timer::TimerWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
 
 u8 Timer::ReadTIMA(u64 timestamp) const {
     int shift = ((tac - 1) & 0b11) * 2 + 2;
-    u8 ticks = ((timestamp - last_reset) >> shift) + tima;
-    return ticks % (0x100 - tma);
+    u64 ticks = ((timestamp - last_reset) >> shift) + tima;
+    return static_cast<u8>(ticks % (0x100 - tma));
 }
 
 void Timer::Install(Bus& bus) {

@@ -1,10 +1,11 @@
 #pragma once
+#pragma once
 
+#include <bitset>
+#include <semaphore>
 #include <vector>
 
 #include <immintrin.h>
-
-#include <boost/lockfree/spsc_queue.hpp>
 
 #include "common/types.hpp"
 #include "ppu.hpp"
@@ -18,9 +19,10 @@ public:
     ~Renderer();
 
     void RecieveFrameWrites(PPU::FrameWrites frame_writes) {
-        // TODO: not busy wait here
-        while (!frame_write_queue.write_available()) { std::this_thread::yield(); }
-        frame_write_queue.push(std::move(frame_writes));
+        frames_free.acquire();
+        *push_iter = std::move(frame_writes);
+        if (frame_write_queue.end() == ++push_iter) { push_iter = frame_write_queue.begin(); }
+        frames_queued.release();
     };
 
     std::chrono::nanoseconds GetSpeed() { return speed; }
@@ -41,9 +43,16 @@ private:
         u8 xpos{};
         u8 tile{};
         u8 flags{};
+
+        [[nodiscard]] bool HighPriorityBG() const { return flags & (1 << 7); }
+        [[nodiscard]] bool YFlip() const { return flags & (1 << 6); }
+        [[nodiscard]] bool XFlip() const { return flags & (1 << 5); }
+        [[nodiscard]] bool SecondPallete() const { return flags & (1 << 4); }
     };
     std::array<Object, 0xA0 / sizeof(Object)> oam;
     std::vector<u8> vram = std::vector<u8>(0x4000);
+    std::bitset<0x2000> tile_row_dirty;
+    std::vector<__m256i> cached_tile_rows = std::vector<__m256i>(0x2000);
 
     void RecieveLCDWrite(PPU::FrameWrites::LCDWrite lcd_write);
     void RecieveOAMWrite(PPU::FrameWrites::OAMWrite oam_write);
@@ -87,39 +96,51 @@ private:
         }
     } presenter;
 
-    boost::lockfree::spsc_queue<PPU::FrameWrites, boost::lockfree::capacity<8>> frame_write_queue;
+    static constexpr usize FRAME_QUEUE_SIZE = 8;
+    using FrameQueue = std::array<PPU::FrameWrites, FRAME_QUEUE_SIZE>;
+    FrameQueue frame_write_queue{};
+    FrameQueue::iterator push_iter;
+    FrameQueue::iterator pop_iter;
+    std::counting_semaphore<FRAME_QUEUE_SIZE> frames_queued;
+    std::counting_semaphore<FRAME_QUEUE_SIZE> frames_free;
+
+    //bool skip_frames = false;
     std::atomic<bool> stop{false};
     std::thread render_thread;
 
     void Run();
-    void SkipFrame(PPU::FrameWrites frame_writes);
-    void RenderFrame(PPU::FrameWrites frame_writes);
+    void SkipFrame(PPU::FrameWrites& frame_writes);
+    void RenderFrame(PPU::FrameWrites& frame_writes);
 
-    void RenderBGScanline(unsigned scanline, std::span<u32, PPU::WIDTH>& buffer);
-    
-    static std::array<u32, 4> GetPalette(u8 reg) {
-        static constexpr std::array<u32, 4> palette{0xFF'FF'FF'FF, 0xFF'AA'AA'AA, 0xFF'53'53'53,
-                                                    0xFF'00'00'00};
-        return {palette[(reg >> 0) & 0b11], palette[(reg >> 2) & 0b11], palette[(reg >> 4) & 0b11],
-                palette[(reg >> 6) & 0b11]};
+    void RenderBGScanline(unsigned scanline, u32* color_buffer, s32* priority_buffer);
+
+    static __m128i GetPalette(u8 reg) {
+        /*alignas(__m256i) static constexpr std::array<u32, 4> pallet_rgba{0xFF'FF'FF'FFu,
+           0xFF'AA'AA'AAu, 0xFF'53'53'53u, 0xFF'00'00'00u};*/
+        auto palette_vec =
+            _mm_set_epi32(0xFF'FF'FF'FFu, 0xFF'AA'AA'AAu, 0xFF'53'53'53u, 0xFF'00'00'00u);
+        auto permutation = _mm_and_si128(
+            _mm_srlv_epi32(_mm_set1_epi32(reg), _mm_set_epi32(0, 2, 4, 6)), _mm_set1_epi32(0b11));
+        return _mm256_extracti128_si256(
+            _mm256_permutevar8x32_epi32(_mm256_set_m128i(_mm_setzero_si128(), palette_vec),
+                                        _mm256_set_m128i(_mm_setzero_si128(), permutation)),
+            0);
     }
     unsigned GetBGTileIndex(unsigned x, unsigned y) {
-        usize idx = y * 32 + x;
-        idx += (lcd.control & 0x08) * (0x100 / 0x08);
-        return vram[0x1800 + idx];
+        usize idx = y * 32_sz + x;
+        idx += (lcd.control & 0x08u) * (0x100_sz / 0x08_sz);
+        return vram[0x1800_sz + idx];
     }
-    auto GetBGTile(unsigned index) {
-        usize idx = index * 16;
-        if (!(lcd.control & 0x10) && index < 0x80) idx += 0x1000;
-        return std::span<const u16, 8>{reinterpret_cast<const u16*>(vram.data() + idx), 8};
+    usize GetBGTileOffset(unsigned index) {
+        usize offset = index * 16_sz;
+        if (!(lcd.control & 0x10) && index < 0x80) offset += 0x1000;
+        return offset;
     }
-    auto GetSpriteTile(unsigned index) {
-        usize idx = index * 16;
-        return std::span<const u16, 8>{reinterpret_cast<const u16*>(vram.data() + idx), 8};
+    usize GetSpriteTileOffset(unsigned index) { return index * 16_sz;
     }
-    static __m256i DecodeTile(u16 tile_row);
-    void RenderBGSpriteRow(std::span<u32, 8> pixels, u16 tile_row,
-                           __m256i palette);
+    __m256i GetTileRow(usize tile_offset, unsigned row);
+    void RenderBGSpriteRow(u32* color_buffer, s32* priority_buffer,
+                           usize tile_vram_offset, unsigned row, __m256i palette);
 };
 
 } // namespace CGB::Core

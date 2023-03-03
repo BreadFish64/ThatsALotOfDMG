@@ -18,7 +18,7 @@ public:
     virtual void Install(Bus& bus) = 0;
     virtual void Run() = 0;
 
-    virtual void ScheduleEvent(u64 timestamp, Event event) = 0;
+    virtual void ScheduleEvent(u64 event_timestamp, Event event) = 0;
     virtual void DescheduleEvent(Event event) = 0;
 
     virtual std::chrono::nanoseconds GetSpeed() = 0;

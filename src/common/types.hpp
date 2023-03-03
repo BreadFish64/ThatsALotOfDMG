@@ -35,4 +35,10 @@ constexpr usize operator""_sz(unsigned long long x) { return static_cast<usize>(
 // represents a guest address
 using GADDR = u16;
 
+// Cast enum class to underlying type
+template <typename E>
+auto underlying_cast(E e) {
+    return static_cast<std::underlying_type_t<E>>(e);
+} 
+
 } // namespace CGB

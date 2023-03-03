@@ -4,6 +4,8 @@
 #include "virtual_memory_windows.hpp"
 #include "win_error.hpp"
 
+#pragma warning(disable : 28160)
+
 namespace CGB::Common::Windows::VirtualMemory {
 
 constexpr DWORD AccessMask(PROTECTION protection) {
@@ -49,7 +51,16 @@ MappedFile::MappedFile() : file_handle{INVALID_HANDLE_VALUE} {};
 MappedFile::MappedFile(const std::filesystem::path& path, PROTECTION access, PROTECTION share) {
     file_handle.reset(CreateFileW(path.c_str(), AccessMask(access), ShareMode(share), nullptr,
                                   OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr));
-    if (file_handle.get() == INVALID_HANDLE_VALUE) LogError();
+    if (file_handle.get() == INVALID_HANDLE_VALUE) {
+        LogError();
+        return;
+    }
+    LARGE_INTEGER win_size{};
+    if (!GetFileSizeEx(file_handle.get(), &win_size)) {
+        LogError();
+        return;
+    }
+    size = win_size.QuadPart;
 }
 
 MappedFile::~MappedFile() {}
@@ -64,8 +75,8 @@ ReservedSpace::ReservedSpace(usize size, void* base) : size{size} {
 
 ReservedSpace::~ReservedSpace() {}
 
-void ReservedSpace::Split(usize offset, usize size) {
-    if (!::VirtualFree(static_cast<u8*>(ptr.get()) + offset, size,
+void ReservedSpace::Split(usize offset, usize split_size) {
+    if (!::VirtualFree(static_cast<u8*>(ptr.get()) + offset, split_size,
                        MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) {
         LOG(Warning, "Address space slice failed, the region may already be the right size");
     }

@@ -2,7 +2,8 @@ find_package(SDL2 REQUIRED)
 
 add_executable(CGB
     "main.cpp"
-"vk_renderer_frontend.cpp" "vk_renderer_frontend.hpp")
+    "vk_renderer_frontend.cpp"
+)
 
 CGB_ADD_DEFINITIONS(CGB)
 

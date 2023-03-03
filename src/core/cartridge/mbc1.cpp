@@ -1,3 +1,4 @@
+#include <bit>
 #include <filesystem>
 #include <fstream>
 #include <ranges>
@@ -9,6 +10,9 @@
 namespace CGB::Core {
 
 MBC1::MBC1(CartridgeHeader&& unspecialized) : SpecializedCartridge{std::move(unspecialized)} {
+    rom_bank_count = (rom_file_handle.Size() + Bus::PAGE_SIZE - 1) / Bus::PAGE_SIZE;
+    rom_bank_mask = (1 << std::bit_width(rom_bank_count)) - 1;
+
     if (CartridgeType() != CARTRIDGE_TYPE::MBC1) {
         if (CartridgeType() == CARTRIDGE_TYPE::MBC1_RAM_BATTERY) {
             ram_file_path = rom_file_path.replace_extension(".sav");
@@ -102,12 +106,14 @@ void MBC1::RamEnable([[maybe_unused]] Bus& bus, u8 enable) {
 
         return;
     }
-    UNREACHABLE();
 };
 
 void MBC1::RomBankNumber([[maybe_unused]] Bus& bus, u8 bank) {
-    rom_bank_number = bank;
-    LOG(Critical, "MBC1 ROM bank switch is unimplemented");
+    rom_bank_number = bank & 0x1F;
+    unsigned real_bank = rom_bank_number & rom_bank_mask;
+    switchable_rom = {};
+    switchable_rom = rom_backing.Map(real_bank * Bus::PAGE_SIZE * 4, Bus::PAGE_SIZE * 4,
+        Common::VirtualMemory::PROTECTION::READ_WRITE, bus.GetAddressSpace(), 0x4000);
 };
 
 void MBC1::RamBankNumber([[maybe_unused]] Bus& bus, u8 bank) {

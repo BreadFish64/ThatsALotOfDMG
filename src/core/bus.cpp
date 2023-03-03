@@ -10,11 +10,11 @@
 namespace CGB::Core {
 
 u8 Bus::ReadNop(Bus&, GADDR addr, u64 timestamp) {
-    LOG(Warning, "Unmapped memory read {:#06X} on cycle {}", addr, timestamp);
-    return ~0;
+    LOG(Trace, "Unmapped memory read {:#06X} on cycle {}", addr, timestamp);
+    return static_cast<u8>(~0);
 }
 void Bus::WriteNop(Bus&, GADDR addr, u8 val, u64 timestamp) {
-    LOG(Warning, "Unmapped memory write {:#06X} = {:#04X} on cycle {}", addr, val, timestamp);
+    LOG(Trace, "Unmapped memory write {:#06X} = {:#04X} on cycle {}", addr, val, timestamp);
 }
 
 Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::unique_ptr<PPU> _ppu)
@@ -47,7 +47,7 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
         }
     }
 
-    for (usize page = 0xC; page <= 0xE; ++page) {
+    for (u8 page = 0xC; page <= 0xE; ++page) {
         address_space.Split(ADDRESS_SPACE + page * PAGE_SIZE, PAGE_SIZE);
         wram_tags[page - 0xC] = MapPassthroughTag(page);
     }
@@ -75,17 +75,18 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
     timer->Install(*this);
 
     // TODO: Figure out something else to do with this serial stub
-    auto serial_tag =
-        RegisterMemoryTag(ReadNop, []([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
-                                      u8 val, [[maybe_unused]] u64 timestamp) {
-            static std::ofstream serial_output{"serial_output.txt"};
-            serial_output << static_cast<char>(val);
-            serial_output.flush();
-        });
-    AttachIOHandler(0x01, serial_tag);
-    auto input_tag = RegisterMemoryTag([]([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
-                                          [[maybe_unused]] u64 timestamp) -> u8 { return ~0; },
-                                       WriteNop);
+    // auto serial_tag =
+    //    RegisterMemoryTag(ReadNop, []([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
+    //                                  u8 val, [[maybe_unused]] u64 timestamp) {
+    //        static std::ofstream serial_output{"serial_output.txt"};
+    //        serial_output << static_cast<char>(val);
+    //        serial_output.flush();
+    //    });
+    // AttachIOHandler(0x01, serial_tag);
+    auto input_tag =
+        RegisterMemoryTag([]([[maybe_unused]] Bus& bus, [[maybe_unused]] GADDR addr,
+                             [[maybe_unused]] u64 timestamp) -> u8 { return static_cast<u8>(~0); },
+                          WriteNop);
     AttachIOHandler(0x00, input_tag);
 
     LOG(Info, "All hardware installed onto bus");

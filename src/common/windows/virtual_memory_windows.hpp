@@ -21,6 +21,7 @@ using WinHandle = std::unique_ptr<std::remove_pointer_t<HANDLE>, HandleCloser>;
 
 class MappedFile {
     WinHandle file_handle{};
+    usize size{};
 
 public:
     MappedFile();
@@ -30,6 +31,8 @@ public:
     MappedFile& operator=(MappedFile&&) = default;
 
     HANDLE WinHandle() const { return file_handle.get(); }
+
+    usize Size() const { return size; }
 };
 
 struct WinVirtualFree {
@@ -47,7 +50,7 @@ public:
     ~ReservedSpace();
     ReservedSpace& operator=(ReservedSpace&&) = default;
 
-    void Split(usize offset, usize size);
+    void Split(usize offset, usize split_size);
 
     template <typename T = u8>
     std::span<T> Span() const {

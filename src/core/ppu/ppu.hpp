@@ -41,6 +41,7 @@ public:
         void PushOAM(GADDR addr, u8 val, u64 timestamp);
         void PushVRAM(GADDR addr, u8 val, u64 timestamp);
         void Close();
+        void Clear();
     };
 
     struct LcdRegs {
@@ -56,6 +57,15 @@ public:
         u8 obp1{0xFF};
         u8 wy{};
         u8 wx{};
+
+        [[nodiscard]] bool EnableLCD() const { return control & (1 << 7); }
+        [[nodiscard]] bool UseUpperWindowTileMap() const { return control & (1 << 6); }
+        [[nodiscard]] bool EnableWindow() const { return control & (1 << 5); }
+        [[nodiscard]] bool UseLowerBGTileData() const { return control & (1 << 4); }
+        [[nodiscard]] bool UseUpperBGTileMap() const { return control & (1 << 3); }
+        [[nodiscard]] bool UseLargeObjects() const { return control & (1 << 2); }
+        [[nodiscard]] bool EnableObjects() const { return control & (1 << 1); }
+        [[nodiscard]] bool EnableBG() const { return control & (1 << 0); }
     };
     u64 last_dma{0};
 
@@ -88,8 +98,12 @@ private:
 public:
     PPU(std::unique_ptr<Renderer> renderer);
     ~PPU();
+
+    const LcdRegs& GetLcdRegs() const { return lcd; }
+
     void Install(Bus& bus);
     void VBlank(u64 timestamp);
+    void LCD_STAT_LYC_IS_LY(u64 timestamp);
 };
 
 } // namespace CGB::Core

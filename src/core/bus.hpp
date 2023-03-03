@@ -23,6 +23,7 @@ static_assert(sizeof(MemoryTag) == 1);
 
 enum class Event {
     VBlank,
+    LCD_STAT_LYC_IS_LY,
 };
 
 class Bus {

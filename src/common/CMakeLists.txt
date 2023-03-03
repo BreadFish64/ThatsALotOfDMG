@@ -10,7 +10,7 @@ add_library(Common STATIC
 
 CGB_ADD_DEFINITIONS(Common)
 
-target_link_libraries(Common PUBLIC fmt::fmt Boost::boost)
+target_link_libraries(Common PUBLIC fmt::fmt-header-only Boost::boost)
 
 if(MSVC)
 target_sources(Common PRIVATE

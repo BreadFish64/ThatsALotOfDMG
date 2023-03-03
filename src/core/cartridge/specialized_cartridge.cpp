@@ -18,7 +18,9 @@ std::unique_ptr<SpecializedCartridge> SpecializedCartridge::Make(CartridgeHeader
     case CARTRIDGE_TYPE::MBC5:
     case CARTRIDGE_TYPE::MBC5_RAM:
     case CARTRIDGE_TYPE::MBC5_RAM_BATTERY: return std::make_unique<MBC5>(std::move(unspecialized));
-    default: LOG(Critical, "Unimplemented cartridge type: {:#04X}", unspecialized.CartridgeType());
+    default:
+        LOG(Critical, "Unimplemented cartridge type: {:#04X}",
+            underlying_cast(unspecialized.CartridgeType()));
     }
     return nullptr;
 }
