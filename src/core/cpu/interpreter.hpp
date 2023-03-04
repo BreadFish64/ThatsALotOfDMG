@@ -78,11 +78,34 @@ inline unsigned char __builtin_subcb(unsigned char a, unsigned char b, unsigned 
 
 namespace CGB::Core::CPU {
 
+class Interpreter;
+
 struct Assembler : Xbyak::CodeGenerator {
-    Assembler();
+    Interpreter& interpreter;
+
+    Assembler(Interpreter& interpreter);
     ~Assembler();
 
-    void prologue();
+    static constexpr auto v_bus = Xbyak::Reg64{Xbyak::Reg64::RCX};
+    static constexpr auto v_timestamp = Xbyak::Reg64{Xbyak::Reg64::RDX};
+
+    static constexpr auto nv_interp = Xbyak::Reg64{Xbyak::Reg64::RDI};
+    static constexpr auto nv_mem = Xbyak::Reg64{Xbyak::Reg64::RSI};
+    static constexpr auto nv_pc = Xbyak::Reg16{Xbyak::Reg16::BP};
+    static constexpr auto nv_scratch = Xbyak::Reg64{Xbyak::Reg64::RBX};
+
+    static constexpr auto v_addr = Xbyak::Reg16{Xbyak::Reg16::R8};
+
+    void (*prologue)(Interpreter&, u8);
+    Xbyak::Label epilogue;
+
+    void generatePrologue();
+    void generateEpilogue();
+
+    void beginOpcode(u8 opcode);
+    void endOpcode(u8 opcode);
+
+    void generateInterruptControl();
 };
 
 template <typename Key, typename Val, std::size_t size>
@@ -91,6 +114,8 @@ using StaticMap =
                                     boost::container::static_vector<std::pair<Key, Val>, size>>;
 
 class Interpreter final : public BaseCPU {
+    friend struct Assembler;
+
     static constexpr std::array<std::string_view, 8> R8_NAME{
         "B", "C", "D", "E", "H", "L", "[HL]", "A",
     };
@@ -154,13 +179,13 @@ class Interpreter final : public BaseCPU {
     Bus* bus{};
 
     u8 Load(GADDR addr) {
-        u8 val = bus->Read(addr, timestamp);
+        u8 val = bus->Read(timestamp, addr);
         timestamp += 4;
         return val;
     }
 
     void Store(GADDR addr, u8 val) {
-        bus->Write(addr, val, timestamp);
+        bus->Write(timestamp, addr, val);
         timestamp += 4;
     }
 
@@ -783,6 +808,8 @@ class Interpreter final : public BaseCPU {
             [[clang::musttail]] return state.JUMP_TABLE[opcode](state, opcode);
         }
     }
+
+    std::array<void*, 256> OPCODE_TABLE{};
 
     std::array<Opcode, 256> JUMP_TABLE = []() constexpr {
         std::array<Opcode, 256> table{};

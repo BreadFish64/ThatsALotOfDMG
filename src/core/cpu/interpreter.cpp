@@ -6,11 +6,70 @@
 
 namespace CGB::Core::CPU {
 
-Assembler::Assembler() {}
+using namespace Xbyak;
+
+Assembler::Assembler(Interpreter& interpreter) : interpreter{interpreter} {
+    generatePrologue();
+    generateEpilogue();
+
+    generateInterruptControl();
+
+    setProtectModeRE();
+}
 
 Assembler::~Assembler() {}
 
-void Assembler::prologue() {}
+void Assembler::generatePrologue() {
+    align();
+    prologue = getCurr<decltype(prologue)>();
+
+    push(nv_interp.cvt64());
+    push(nv_mem.cvt64());
+    push(nv_pc.cvt64());
+    push(nv_scratch.cvt64());
+
+    mov(nv_interp, Reg64{Reg64::RCX});
+    movzx(nv_scratch, Reg8{Reg8::DL});
+
+    mov(v_bus, qword[nv_interp + offsetof(Interpreter, bus)]);
+    mov(nv_mem, qword[v_bus + offsetof(Bus, address_space_loc)]);
+
+    mov(nv_pc, word[nv_interp + offsetof(Interpreter, PC)]);
+    mov(v_timestamp, qword[nv_interp + offsetof(Interpreter, timestamp)]);
+
+    jmp(qword[nv_interp + nv_scratch * 8 + offsetof(Interpreter, OPCODE_TABLE)]);
+}
+
+void Assembler::generateEpilogue() {
+    align();
+    L(epilogue);
+
+    mov(qword[nv_interp + offsetof(Interpreter, timestamp)], v_timestamp);
+    mov(word[nv_interp + offsetof(Interpreter, PC)], nv_pc);
+
+    pop(nv_scratch.cvt64());
+    pop(nv_pc.cvt64());
+    pop(nv_mem.cvt64());
+    pop(nv_interp.cvt64());
+    ret();
+}
+
+void Assembler::beginOpcode(u8 opcode) {
+    align();
+    interpreter.OPCODE_TABLE[opcode] = getCurr<void*>();
+    interpreter.JUMP_TABLE[opcode] = prologue;
+    // TODO: control flow guard
+}
+void Assembler::endOpcode([[maybe_unused]] u8 opcode) { jmp(epilogue); }
+
+void Assembler::generateInterruptControl() {
+    for (u8 variant : {0b11'110'011, 0b11'111'011}) {
+        beginOpcode(variant);
+        bool enable_interrupts = variant & 0b00'001'000;
+        mov(byte[nv_interp + offsetof(Interpreter, IME)], enable_interrupts);
+        endOpcode(variant);
+    }
+}
 
 void Interpreter::ScheduleEvent(u64 event_timestamp, Event event) {
     schedule.emplace(event_timestamp, event);
@@ -22,7 +81,7 @@ void Interpreter::DescheduleEvent(Event event) {
     if (it != schedule.end()) { schedule.erase(it); }
 }
 
-Interpreter::Interpreter() : assembler{std::make_unique<Assembler>()} {
+Interpreter::Interpreter() {
     r8.C = 0x13;
     r8.B = 0x00;
     r8.E = 0xD8;
@@ -31,6 +90,8 @@ Interpreter::Interpreter() : assembler{std::make_unique<Assembler>()} {
     r8.H = 0x01;
     r8.A = 0x01;
     r8.F = 0;
+
+    assembler = std::make_unique<Assembler>(*this);
 }
 
 void Interpreter::Install(Bus& _bus) {

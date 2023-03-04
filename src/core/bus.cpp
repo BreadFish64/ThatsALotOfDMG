@@ -21,6 +21,7 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
     : address_space{ADDRESS_SPACE * 2},
       cartridge{SpecializedCartridge::Make(std::move(*_cartridge))}, cpu{std::move(_cpu)},
       ppu{std::move(_ppu)}, timer{std::make_unique<Timer>()}, tag_backing{TAG_TYPES::SIZE} {
+    address_space_loc = static_cast<void*>(address_space.Span().data());
 
     LOG(Info, "Installing WRAM on bus");
     auto echo_tag = RegisterMemoryTag(

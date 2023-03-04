@@ -13,6 +13,7 @@ class SpecializedCartridge;
 class BaseCPU;
 class PPU;
 class Timer;
+struct Assembler;
 
 struct MemoryTag {
     bool read : 1;
@@ -27,6 +28,8 @@ enum class Event {
 };
 
 class Bus {
+    friend struct Assembler;
+
 public:
     using ReadHandler = u8 (*)(Bus&, GADDR, u64);
     using WriteHandler = void (*)(Bus&, GADDR, u8, u64);
@@ -64,6 +67,8 @@ public:
     explicit Bus(std::unique_ptr<CartridgeHeader> cartridge, CPU::MainCPU cpu,
                  std::unique_ptr<PPU> ppu);
     ~Bus();
+
+    void* address_space_loc;
     auto Memory() { return address_space.Span().first<ADDRESS_SPACE>(); }
     auto Tags() { return address_space.Span<MemoryTag>().last<ADDRESS_SPACE>(); }
 
@@ -81,12 +86,12 @@ public:
 
     void SwitchWRAMBank(u8 index);
 
-    u8 Read(GADDR addr, u64 timestamp) {
+    u8 Read(u64 timestamp, GADDR addr) {
         auto tag = Tags()[addr];
         if (tag.read) [[unlikely]] return read_handlers[tag.handler](*this, addr, timestamp);
         return Memory()[addr];
     }
-    void Write(GADDR addr, u8 val, u64 timestamp) {
+    void Write(u64 timestamp, GADDR addr, u8 val) {
         auto tag = Tags()[addr];
         if (tag.write) [[unlikely]] return write_handlers[tag.handler](*this, addr, val, timestamp);
         Memory()[addr] = val;
