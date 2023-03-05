@@ -87,8 +87,8 @@ void MBC5::Install(Bus& bus) {
     ram_tags[1] = bus.MapNopTag(0xB);
 }
 
-void MBC5::RamEnableHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                            [[maybe_unused]] u64 timestamp) {
+void MBC5::RamEnableHandler(Bus& bus, [[maybe_unused]] GADDR addr, [[maybe_unused]] u64 timestamp,
+                            u8 val) {
     auto& cartridge = static_cast<MBC5&>(bus.GetCartridge());
     bool old_enabled = (cartridge.ram_enable & 0x0F) == 0x0A;
     bool new_enabled = (val & 0x0F) == 0x0A;
@@ -105,8 +105,8 @@ void MBC5::RamEnableHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
     }
 }
 
-void MBC5::RomBankNumberHandler(Bus& bus, GADDR addr, u8 val,
-                                [[maybe_unused]] u64 timestamp) {
+void MBC5::RomBankNumberHandler(Bus& bus, GADDR addr, 
+                                [[maybe_unused]] u64 timestamp, u8 val) {
     auto& cartridge = static_cast<MBC5&>(bus.GetCartridge());
     if (addr >= 0x3000) {
         cartridge.bank_number_high = val;
@@ -120,8 +120,8 @@ void MBC5::RomBankNumberHandler(Bus& bus, GADDR addr, u8 val,
         Common::VirtualMemory::PROTECTION::READ_WRITE, bus.GetAddressSpace(), 0x4000);
 }
 
-void MBC5::RamBankNumberHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                                [[maybe_unused]] u64 timestamp) {
+void MBC5::RamBankNumberHandler(Bus& bus, [[maybe_unused]] GADDR addr,
+                                [[maybe_unused]] u64 timestamp, u8 val) {
     auto& cartridge = static_cast<MBC5&>(bus.GetCartridge());
     cartridge.ram_bank_number = val;
     LOG(Critical, "MBC5 RAM bank switch is unimplemented");

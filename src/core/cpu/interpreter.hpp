@@ -8,26 +8,32 @@
 #include <boost/container/flat_map.hpp>
 #include <boost/container/static_vector.hpp>
 
+#include <Windows.h>
+
 #include <chrono>
 
 // These macros were a mistake and I'm sorry to anyone trying to understand them
 #define TABLE_FILL(operation, base, shift, bits)                                                   \
     [&table]<u8... idx>(u8 _base, u8 _shift, std::integer_sequence<u8, idx...>) {                  \
-        ((table[_base | (idx << _shift)] = TailCallInstr<&Interpreter::operation<idx>>), ...);     \
+        ((table[static_cast<usize>(_base | (idx << _shift))] =                                     \
+              TailCallInstr<&Interpreter::operation<idx>>),                                        \
+         ...);                                                                                     \
     }                                                                                              \
-    (base, shift, std::make_integer_sequence<u8, 1 << bits>());
+    (u8{base}, u8{shift}, std::make_integer_sequence<u8, 1 << bits>());
 #define DOUBLE_TABLE_FILL(operation, base, shift1, bits1, shift2, bits2)                           \
     [&table]<u8... idx1, u8... idx2>(u8 _base, u8 _shift1, std::integer_sequence<u8, idx1...>,     \
                                      u8 _shift2, std::integer_sequence<u8, idx2...> count2) {      \
         const auto helper = [&table]<u8 left, u8... right>(u8 _base, u8 _shift,                    \
                                                            std::integer_sequence<u8, right...>) {  \
-            ((table[_base | (right << _shift)] =                                                   \
+            ((table[static_cast<usize>(_base | (right << _shift))] =                               \
                   TailCallInstr<&Interpreter::operation<left, right>>),                            \
              ...);                                                                                 \
         };                                                                                         \
-        ((helper.template operator()<idx1>(_base | (idx1 << _shift1), _shift2, count2)), ...);     \
+        ((helper.template operator()<idx1>(static_cast<u8>(_base | (idx1 << _shift1)), _shift2,    \
+                                           count2)),                                               \
+         ...);                                                                                     \
     }                                                                                              \
-    (base, shift1, std::make_integer_sequence<u8, 1 << bits1>(), shift2,                           \
+    (u8{base}, u8{shift1}, std::make_integer_sequence<u8, 1 << bits1>(), shift2,                   \
      std::make_integer_sequence<u8, 1 << bits2>());
 
 #ifndef __has_builtin
@@ -76,6 +82,72 @@ inline unsigned char __builtin_subcb(unsigned char a, unsigned char b, unsigned 
 }
 #endif
 
+// Windows unwind info implementation based on dynarmic project.
+// Copyright (c) 2016 MerryMage
+// SPDX-License-Identifier: 0BSD
+
+using UBYTE = CGB::u8;
+
+enum UNWIND_REGISTER_CODES {
+    UWRC_RAX,
+    UWRC_RCX,
+    UWRC_RDX,
+    UWRC_RBX,
+    UWRC_RSP,
+    UWRC_RBP,
+    UWRC_RSI,
+    UWRC_RDI,
+    UWRC_R8,
+    UWRC_R9,
+    UWRC_R10,
+    UWRC_R11,
+    UWRC_R12,
+    UWRC_R13,
+    UWRC_R14,
+    UWRC_R15,
+};
+
+enum UNWIND_OPCODE {
+    UWOP_PUSH_NONVOL = 0,
+    UWOP_ALLOC_LARGE = 1,
+    UWOP_ALLOC_SMALL = 2,
+    UWOP_SET_FPREG = 3,
+    UWOP_SAVE_NONVOL = 4,
+    UWOP_SAVE_NONVOL_FAR = 5,
+    UWOP_SAVE_XMM128 = 8,
+    UWOP_SAVE_XMM128_FAR = 9,
+    UWOP_PUSH_MACHFRAME = 10,
+};
+
+union UNWIND_CODE {
+    struct {
+        UBYTE CodeOffset;
+        UBYTE UnwindOp : 4;
+        UBYTE OpInfo : 4;
+    } code;
+    USHORT FrameOffset;
+};
+static_assert(sizeof(UNWIND_CODE) == sizeof(USHORT));
+
+// UNWIND_INFO is a tail-padded structure
+struct UNWIND_INFO {
+    UBYTE Version : 3;
+    UBYTE Flags : 5;
+    UBYTE SizeOfProlog;
+    UBYTE CountOfCodes;
+    UBYTE FrameRegister : 4;
+    UBYTE FrameOffset : 4;
+    std::array<UNWIND_CODE, 32> UnwindCode;
+    // With Flags == 0 there are no additional fields.
+    // OPTIONAL UNW_EXCEPTION_INFO ExceptionInfo;
+};
+static_assert(alignof(std::array<UNWIND_CODE, 32>) == alignof(USHORT));
+
+struct UNW_EXCEPTION_INFO {
+    ULONG ExceptionHandler;
+    // OPTIONAL ARBITRARY HandlerData;
+};
+
 namespace CGB::Core::CPU {
 
 class Interpreter;
@@ -86,18 +158,52 @@ struct Assembler : Xbyak::CodeGenerator {
     Assembler(Interpreter& interpreter);
     ~Assembler();
 
+    static constexpr auto v_ret = Xbyak::Reg8{Xbyak::Reg8::AL};
+    static constexpr auto nv_sp = Xbyak::Reg64{Xbyak::Reg64::RSP};
+
+    // Keep these in argument registers for memory accesses
     static constexpr auto v_bus = Xbyak::Reg64{Xbyak::Reg64::RCX};
-    static constexpr auto v_timestamp = Xbyak::Reg64{Xbyak::Reg64::RDX};
+    static constexpr auto v_addr = Xbyak::Reg16{Xbyak::Reg16::DX};
+    static constexpr auto v_timestamp = Xbyak::Reg64{Xbyak::Reg64::R8};
+    static constexpr auto v_write_val = Xbyak::Reg8{Xbyak::Reg8::R9B};
 
-    static constexpr auto nv_interp = Xbyak::Reg64{Xbyak::Reg64::RDI};
-    static constexpr auto nv_mem = Xbyak::Reg64{Xbyak::Reg64::RSI};
+    // Use r8-r15 for 64-bit registers first since they already need the REX prefix
+    static constexpr auto nv_mem = Xbyak::Reg64{Xbyak::Reg64::R13};
+    static constexpr auto nv_interp = Xbyak::Reg64{Xbyak::Reg64::R12};
     static constexpr auto nv_pc = Xbyak::Reg16{Xbyak::Reg16::BP};
-    static constexpr auto nv_scratch = Xbyak::Reg64{Xbyak::Reg64::RBX};
+    static constexpr auto nv_rhs = Xbyak::Reg8{Xbyak::Reg8::BL};
 
-    static constexpr auto v_addr = Xbyak::Reg16{Xbyak::Reg16::R8};
+    static const inline std::array pushed_registers{
+        nv_mem.cvt64(),
+        nv_interp.cvt64(),
+        nv_pc.cvt64(),
+        nv_rhs.cvt64(),
+    };
+
+    static constexpr std::array nv_unpref_scratch{
+        Xbyak::Reg8{Xbyak::Reg8::DI},
+        Xbyak::Reg8{Xbyak::Reg8::SI},
+    };
+
+    static constexpr std::array nv_pref_scratch{
+        Xbyak::Reg8{Xbyak::Reg8::R14},
+        Xbyak::Reg8{Xbyak::Reg8::R15},
+    };
 
     void (*prologue)(Interpreter&, u8);
     Xbyak::Label epilogue;
+
+    UNWIND_INFO unwind_info{};
+    std::vector<RUNTIME_FUNCTION> debug_function_table;
+
+    void* allocateFromCodeSpace(usize alloc_size) {
+        if (size_ + alloc_size >= maxSize_) { throw Xbyak::Error(Xbyak::ERR_CODE_IS_TOO_BIG); }
+
+        void* ret = getCurr<void*>();
+        size_ += alloc_size;
+        memset(ret, 0, alloc_size);
+        return ret;
+    }
 
     void generatePrologue();
     void generateEpilogue();
@@ -179,13 +285,13 @@ class Interpreter final : public BaseCPU {
     Bus* bus{};
 
     u8 Load(GADDR addr) {
-        u8 val = bus->Read(timestamp, addr);
+        u8 val = bus->Read(addr, timestamp);
         timestamp += 4;
         return val;
     }
 
     void Store(GADDR addr, u8 val) {
-        bus->Write(timestamp, addr, val);
+        bus->Write(addr, timestamp, val);
         timestamp += 4;
     }
 
@@ -285,7 +391,7 @@ class Interpreter final : public BaseCPU {
         case 0: return r16.BC;
         case 1: return r16.DE;
         case 2: return r16.HL;
-        case 3: return (u16{r8.A} << 8) | PackFlags();
+        case 3: return static_cast<u16>((u16{r8.A} << 8) | PackFlags());
         default: UNREACHABLE();
         }
     }
@@ -313,7 +419,11 @@ class Interpreter final : public BaseCPU {
         PushByte(static_cast<u8>(val));
     }
     u8 PopByte() { return Load(SP++); }
-    u16 PopWord() { return PopByte() | (u16{PopByte()} << 8); }
+    u16 PopWord() {
+        u16 word = PopByte();
+        word |= (u16{PopByte()} << 8);
+        return word;
+    }
 
     void ADD(u8 rhs) {
         u8 lhs = r8.A;
@@ -393,21 +503,21 @@ class Interpreter final : public BaseCPU {
 
     u8 RLC(u8 val) {
         flag.C = val & (1 << 7);
-        val = (val << 1) | (flag.C ? 1 : 0);
+        val = static_cast<u8>((val << 1) | (flag.C ? 1 : 0));
         flag.N = false;
         flag.H = false;
         return val;
     }
     u8 RRC(u8 val) {
         flag.C = val & 1;
-        val = (flag.C << 7) | (val >> 1);
+        val = static_cast<u8>((flag.C << 7) | (val >> 1));
         flag.N = false;
         flag.H = false;
         return val;
     }
     u8 RL(u8 val) {
         bool carry = val & (1 << 7);
-        val = (val << 1) | (flag.C ? 1 : 0);
+        val = static_cast<u8>((val << 1) | (flag.C ? 1 : 0));
         flag.C = carry;
         flag.N = false;
         flag.H = false;
@@ -415,7 +525,7 @@ class Interpreter final : public BaseCPU {
     }
     u8 RR(u8 val) {
         bool carry = val & 1;
-        val = (flag.C << 7) | (val >> 1);
+        val = static_cast<u8>((flag.C << 7) | (val >> 1));
         flag.C = carry;
         flag.N = false;
         flag.H = false;
@@ -430,13 +540,13 @@ class Interpreter final : public BaseCPU {
     }
     u8 SRA(u8 val) {
         flag.C = val & 1;
-        val = static_cast<s8>(val) >> 1;
+        val = static_cast<u8>(static_cast<s8>(val) >> 1);
         flag.N = false;
         flag.H = false;
         return val;
     }
     u8 SWAP(u8 val) {
-        val = (val << 4) | (val >> 4);
+        val = static_cast<u8>((val << 4) | (val >> 4));
         flag.C = false;
         flag.N = false;
         flag.H = false;
@@ -486,7 +596,7 @@ class Interpreter final : public BaseCPU {
     void SET_u3_r8(u8 instruction) {
 
         u8 bit = (instruction >> 3) & 0b111;
-        WriteR8<reg_idx>(ReadR8<reg_idx>() | (1 << bit));
+        WriteR8<reg_idx>(static_cast<u8>(ReadR8<reg_idx>() | (1 << bit)));
     }
 
     bool IME = false;
@@ -503,8 +613,8 @@ class Interpreter final : public BaseCPU {
         default: std::abort();
         }
     }
-    static void InterruptRegWriteHandler(Bus& bus, GADDR addr, u8 val,
-                                         [[maybe_unused]] u64 timestamp) {
+    static void InterruptRegWriteHandler(Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp,
+                                         u8 val) {
         auto& interpreter = static_cast<Interpreter&>(bus.GetCPU().GetImpl());
         switch (addr) {
         // TODO: Schedule interrupts when writing to these flags
@@ -526,7 +636,7 @@ class Interpreter final : public BaseCPU {
 
         LOG(Critical, "{:#06X} Unimplemented Opcode {:#010B}", PC, instruction);
         LOG(Info, "Host time: {} Cycles: {} Speed: {}Hz", seconds, timestamp,
-            static_cast<u64>(timestamp / seconds.count()));
+            static_cast<u64>(static_cast<double>(timestamp) / seconds.count()));
     }
 
     template <void (Interpreter::*handler)(u8)>
@@ -564,12 +674,13 @@ class Interpreter final : public BaseCPU {
     void NOP([[maybe_unused]] u8 instruction) {}
     void JR_s8([[maybe_unused]] u8 instruction) {
         s8 offset = static_cast<s8>(Imm8());
-        Jump(PC + 1 + offset);
+        Jump(static_cast<GADDR>(PC + 1 + offset));
     }
     template <u8 condition>
     void JR_cond_s8([[maybe_unused]] u8 instruction) {
         s8 offset = static_cast<s8>(Imm8());
-        if (CheckCondition<condition>()) { Jump(PC + 1 + offset); }
+        if (CheckCondition<condition>()) { Jump(static_cast<GADDR>(PC + 1 + offset));
+        }
     }
     template <u8 reg_idx>
     void LD_r16_u16([[maybe_unused]] u8 instruction) {
@@ -719,7 +830,7 @@ class Interpreter final : public BaseCPU {
         flag.N = false;
         flag.H = ((SP & 0x0F) + (rhs & 0x0F)) & 0x10;
         flag.C = ((SP & 0xFF) + static_cast<u8>(rhs)) & 0x0100;
-        r16.HL = SP + rhs;
+        r16.HL = static_cast<u16>(SP + rhs);
         timestamp += 4;
     }
     template <u8 reg_idx>

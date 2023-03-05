@@ -14,22 +14,53 @@ Assembler::Assembler(Interpreter& interpreter) : interpreter{interpreter} {
 
     generateInterruptControl();
 
-    setProtectModeRE();
+    align();
+    const auto embedded_unwind_info_pos = static_cast<DWORD>(getSize());
+    auto* const embedded_unwind_info =
+        static_cast<UNWIND_INFO*>(allocateFromCodeSpace(sizeof(UNWIND_INFO)));
+    align();
+    *embedded_unwind_info = unwind_info;
+
+    debug_function_table.emplace_back(RUNTIME_FUNCTION{
+        .BeginAddress = 0,
+        .EndAddress = embedded_unwind_info_pos,
+        .UnwindInfoAddress = embedded_unwind_info_pos,
+    });
+    RtlAddFunctionTable(debug_function_table.data(),
+                        static_cast<DWORD>(debug_function_table.size()),
+                        reinterpret_cast<DWORD64>(getCode()));
+    readyRE();
 }
 
-Assembler::~Assembler() {}
+Assembler::~Assembler() { RtlDeleteFunctionTable(debug_function_table.data()); }
 
 void Assembler::generatePrologue() {
     align();
     prologue = getCurr<decltype(prologue)>();
 
-    push(nv_interp.cvt64());
-    push(nv_mem.cvt64());
-    push(nv_pc.cvt64());
-    push(nv_scratch.cvt64());
+    {
+        const uint8_t* const begin_prologue = getCurr();
+        auto unwind_code = unwind_info.UnwindCode.begin();
+        for (auto reg : pushed_registers) {
+            unwind_code->code = {
+                .CodeOffset = static_cast<UBYTE>(getCurr() - begin_prologue),
+                .UnwindOp = UWOP_PUSH_NONVOL,
+                .OpInfo = static_cast<UBYTE>(reg.getIdx()),
+            };
+            push(reg);
+        }
+        const uint8_t* const end_prologue = getCurr();
+
+        unwind_info.Version = 1;
+        unwind_info.Flags = 0;
+        unwind_info.SizeOfProlog = static_cast<UBYTE>(end_prologue - begin_prologue);
+        unwind_info.CountOfCodes = static_cast<UBYTE>(unwind_code - unwind_info.UnwindCode.begin());
+        unwind_info.FrameRegister = 0; // No frame register present
+        unwind_info.FrameOffset = 0;   // Unused because FrameRegister == 0
+    }
 
     mov(nv_interp, Reg64{Reg64::RCX});
-    movzx(nv_scratch, Reg8{Reg8::DL});
+    movzx(v_addr.cvt64(), Reg8{Reg8::DL});
 
     mov(v_bus, qword[nv_interp + offsetof(Interpreter, bus)]);
     mov(nv_mem, qword[v_bus + offsetof(Bus, address_space_loc)]);
@@ -37,7 +68,7 @@ void Assembler::generatePrologue() {
     mov(nv_pc, word[nv_interp + offsetof(Interpreter, PC)]);
     mov(v_timestamp, qword[nv_interp + offsetof(Interpreter, timestamp)]);
 
-    jmp(qword[nv_interp + nv_scratch * 8 + offsetof(Interpreter, OPCODE_TABLE)]);
+    jmp(qword[nv_interp + v_addr.cvt64() * 8 + offsetof(Interpreter, OPCODE_TABLE)]);
 }
 
 void Assembler::generateEpilogue() {
@@ -47,11 +78,9 @@ void Assembler::generateEpilogue() {
     mov(qword[nv_interp + offsetof(Interpreter, timestamp)], v_timestamp);
     mov(word[nv_interp + offsetof(Interpreter, PC)], nv_pc);
 
-    pop(nv_scratch.cvt64());
-    pop(nv_pc.cvt64());
-    pop(nv_mem.cvt64());
-    pop(nv_interp.cvt64());
+    for (auto reg : pushed_registers | std::ranges::views::reverse) { pop(reg); }
     ret();
+    align();
 }
 
 void Assembler::beginOpcode(u8 opcode) {
@@ -63,7 +92,7 @@ void Assembler::beginOpcode(u8 opcode) {
 void Assembler::endOpcode([[maybe_unused]] u8 opcode) { jmp(epilogue); }
 
 void Assembler::generateInterruptControl() {
-    for (u8 variant : {0b11'110'011, 0b11'111'011}) {
+    for (u8 variant : {u8{0b11'110'011}, u8{0b11'111'011}}) {
         beginOpcode(variant);
         bool enable_interrupts = variant & 0b00'001'000;
         mov(byte[nv_interp + offsetof(Interpreter, IME)], enable_interrupts);

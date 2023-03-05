@@ -25,7 +25,8 @@ inline VKAPI_ATTR vk::Bool32 VKAPI_CALL
 VulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
                     [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT messageType,
                     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
-    auto severity_idx = std::countr_zero(static_cast<unsigned>(messageSeverity)) / 4;
+    auto severity_idx =
+        static_cast<std::size_t>(std::countr_zero(static_cast<unsigned>(messageSeverity)) / 4);
     std::array severity_colors{fmt::color::gray, fmt::color::white, fmt::color::yellow,
                                fmt::color::red};
     fmt::print(fmt::fg(severity_colors[severity_idx]), "{}\n", pCallbackData->pMessage);
@@ -36,9 +37,7 @@ namespace CGB::Vulkan {
 
 inline vk::DispatchLoaderDynamic loader;
 
-inline vk::DispatchLoaderDynamic& GetDefaultDispatcher() {
-    return loader;
-}
+inline vk::DispatchLoaderDynamic& GetDefaultDispatcher() { return loader; }
 
 inline void InitDispatcher(PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr) {
     static std::atomic_bool initialized{false};

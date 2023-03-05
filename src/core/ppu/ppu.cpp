@@ -4,21 +4,21 @@
 #include "renderer.hpp"
 
 namespace CGB::Core {
-void PPU::FrameWrites::PushLCD(GADDR addr, u8 val, u64 timestamp) {
+void PPU::FrameWrites::PushLCD(GADDR addr, u64 timestamp, u8 val) {
     u8 offset = static_cast<u8>(addr - 0xFF40);
     u32 dot = timestamp % FRAME_CYCLES;
     u8 scanline = static_cast<u8>(dot / SCANLINE_CYCLES);
     lcd_writes.emplace_back(LCDWrite{.index = offset, .val = val, .scanline = scanline});
 }
 
-void PPU::FrameWrites::PushOAM(GADDR addr, u8 val, u64 timestamp) {
+void PPU::FrameWrites::PushOAM(GADDR addr, u64 timestamp, u8 val) {
     u32 dot = timestamp % FRAME_CYCLES;
     u8 scanline = static_cast<u8>(dot / SCANLINE_CYCLES);
     oam_dmas.emplace_back(
         OAMWrite{.offset = static_cast<u8>(addr), .val = val, .scanline = scanline});
 }
 
-void PPU::FrameWrites::PushVRAM(GADDR addr, u8 val, u64 timestamp) {
+void PPU::FrameWrites::PushVRAM(GADDR addr, u64 timestamp, u8 val) {
     u32 dot = timestamp % FRAME_CYCLES;
     u8 scanline = static_cast<u8>((dot + (SCANLINE_CYCLES - 80)) / SCANLINE_CYCLES);
     vram_writes.emplace_back(VRAMWrite{.addr = addr, .val = val, .scanline = scanline});
@@ -36,23 +36,23 @@ void PPU::FrameWrites::Clear() {
     vram_writes.clear();
 }
 
-void PPU::VRAMWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
+void PPU::VRAMWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val) {
     bus.Memory()[addr] = val;
-    bus.GetPPU().frame_writes.PushVRAM(addr, val, timestamp);
+    bus.GetPPU().frame_writes.PushVRAM(addr, timestamp, val);
 }
 
 u8 PPU::ReadOAM(GADDR addr, [[maybe_unused]] u64 timestamp) { return oam[addr & 0xFF]; }
-void PPU::WriteOAM(GADDR addr, u8 val, [[maybe_unused]] u64 timestamp) {
+void PPU::WriteOAM(GADDR addr, u64 timestamp, u8 val) {
     oam[addr & 0xFF] = val;
-    bus->GetPPU().frame_writes.PushOAM(addr, val, timestamp);
+    bus->GetPPU().frame_writes.PushOAM(addr, timestamp, val);
 }
 
 u8 PPU::OAMReadHandler(Bus& bus, GADDR addr, u64 timestamp) {
     return bus.GetPPU().ReadOAM(addr, timestamp);
 }
 
-void PPU::OAMWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
-    bus.GetPPU().WriteOAM(addr, val, timestamp);
+void PPU::OAMWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val) {
+    bus.GetPPU().WriteOAM(addr, timestamp, val);
 }
 
 u8 PPU::LCDReadHandler([[maybe_unused]] Bus& bus, GADDR addr, u64 timestamp) {
@@ -93,12 +93,12 @@ u8 PPU::LCDReadHandler([[maybe_unused]] Bus& bus, GADDR addr, u64 timestamp) {
     };
 }
 
-void PPU::LCDWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
+void PPU::LCDWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val) {
     PPU& ppu = bus.GetPPU();
     switch (addr) {
     case 0xFF40: {
         ppu.lcd.control = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF41: {
         LOG(Warning, "Stat interrupts are unimplemented");
@@ -106,11 +106,11 @@ void PPU::LCDWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
     } break;
     case 0xFF42: {
         ppu.lcd.scy = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF43: {
         ppu.lcd.scx = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF45: {
         ppu.lcd.lyc = val;
@@ -128,32 +128,32 @@ void PPU::LCDWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
     case 0xFF46: {
         auto src = static_cast<GADDR>(val) << 8;
         for (GADDR i{0}; i < ppu.oam.size(); ++i) {
-            ppu.WriteOAM(0xFE00 + i, bus.Memory()[src + i], timestamp);
+            ppu.WriteOAM(0xFE00 + i, timestamp, bus.Memory()[static_cast<usize>(src + i)]);
         }
         ppu.last_dma = timestamp;
     } break;
     case 0xFF47: {
         ppu.lcd.bgp = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF48: {
         ppu.lcd.obp0 = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF49: {
         ppu.lcd.obp1 = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF4A: {
         ppu.lcd.wy = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     case 0xFF4B: {
         ppu.lcd.wx = val;
-        ppu.frame_writes.PushLCD(addr, val, timestamp);
+        ppu.frame_writes.PushLCD(addr, timestamp, val);
     } break;
     default:
-        // ppu.frame_writes.PushLCD(addr, val, timestamp);
+        // ppu.frame_writes.PushLCD(addr, timestamp, val);
         LOG(Error, "Unimplemented LCD Register write {:#06X} = {:#04X} on cycle {}", addr, val,
             timestamp);
     };

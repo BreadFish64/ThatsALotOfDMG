@@ -41,10 +41,10 @@ class MBC1 : public SpecializedCartridge {
     void RamBankNumber(Bus& bus, u8 bank);
     void BankingModeSelect(Bus& bus, u8 mode);
 
-    static void RamEnableHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
-    static void RomBankNumberHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
-    static void RamBankNumberHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
-    static void BankingModeSelectHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void RamEnableHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
+    static void RomBankNumberHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
+    static void RamBankNumberHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
+    static void BankingModeSelectHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
 public:
     explicit MBC1(CartridgeHeader&& unspecialized);

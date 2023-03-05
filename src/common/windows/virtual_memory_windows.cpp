@@ -60,7 +60,7 @@ MappedFile::MappedFile(const std::filesystem::path& path, PROTECTION access, PRO
         LogError();
         return;
     }
-    size = win_size.QuadPart;
+    size = static_cast<usize>(win_size.QuadPart);
 }
 
 MappedFile::~MappedFile() {}

@@ -6,7 +6,7 @@
 namespace CGB::Core {
 
 static constexpr u16 GenLicenseeCode(u16 code) {
-    return (((code & 0xF0) << 4) | (code & 0x0F)) + ('0' << 8 | '0');
+    return static_cast<u16>((((code & 0xF0) << 4) | (code & 0x0F)) + ('0' << 8 | '0'));
 }
 
 class CartridgeHeader {

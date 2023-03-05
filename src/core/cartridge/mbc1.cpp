@@ -10,8 +10,8 @@
 namespace CGB::Core {
 
 MBC1::MBC1(CartridgeHeader&& unspecialized) : SpecializedCartridge{std::move(unspecialized)} {
-    rom_bank_count = (rom_file_handle.Size() + Bus::PAGE_SIZE - 1) / Bus::PAGE_SIZE;
-    rom_bank_mask = (1 << std::bit_width(rom_bank_count)) - 1;
+    rom_bank_count = static_cast<u8>((rom_file_handle.Size() + Bus::PAGE_SIZE - 1) / Bus::PAGE_SIZE);
+    rom_bank_mask = static_cast<u8>((1 << std::bit_width(rom_bank_count)) - 1);
 
     if (CartridgeType() != CARTRIDGE_TYPE::MBC1) {
         if (CartridgeType() == CARTRIDGE_TYPE::MBC1_RAM_BATTERY) {
@@ -126,23 +126,23 @@ void MBC1::BankingModeSelect([[maybe_unused]] Bus& bus, u8 mode) {
     LOG(Critical, "MBC1 banking mode select is unimplemented");
 };
 
-void MBC1::RamEnableHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                            [[maybe_unused]] u64 timestamp) {
+void MBC1::RamEnableHandler(Bus& bus, [[maybe_unused]] GADDR addr, [[maybe_unused]] u64 timestamp,
+                            u8 val) {
     static_cast<MBC1&>(bus.GetCartridge()).RamEnable(bus, val);
 }
 
-void MBC1::RomBankNumberHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                                [[maybe_unused]] u64 timestamp) {
+void MBC1::RomBankNumberHandler(Bus& bus, [[maybe_unused]] GADDR addr,
+                                [[maybe_unused]] u64 timestamp, u8 val) {
     static_cast<MBC1&>(bus.GetCartridge()).RomBankNumber(bus, val);
 }
 
-void MBC1::RamBankNumberHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                                [[maybe_unused]] u64 timestamp) {
+void MBC1::RamBankNumberHandler(Bus& bus, [[maybe_unused]] GADDR addr,
+                                [[maybe_unused]] u64 timestamp, u8 val) {
     static_cast<MBC1&>(bus.GetCartridge()).RamBankNumber(bus, val);
 }
 
-void MBC1::BankingModeSelectHandler(Bus& bus, [[maybe_unused]] GADDR addr, u8 val,
-                                    [[maybe_unused]] u64 timestamp) {
+void MBC1::BankingModeSelectHandler(Bus& bus, [[maybe_unused]] GADDR addr,
+                                    [[maybe_unused]] u64 timestamp, u8 val) {
     static_cast<MBC1&>(bus.GetCartridge()).BankingModeSelect(bus, val);
 }
 

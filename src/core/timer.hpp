@@ -14,7 +14,7 @@ class Timer {
     u8 tac{};
 
     static u8 TimerReadHandler(Bus& bus, GADDR addr, u64 timestamp);
-    static void TimerWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void TimerWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
     u8 ReadTIMA(u64 timestamp) const;
 

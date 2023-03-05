@@ -37,9 +37,9 @@ public:
         std::vector<LCDWrite> lcd_writes;
         std::vector<OAMWrite> oam_dmas;
         std::vector<VRAMWrite> vram_writes;
-        void PushLCD(GADDR addr, u8 val, u64 timestamp);
-        void PushOAM(GADDR addr, u8 val, u64 timestamp);
-        void PushVRAM(GADDR addr, u8 val, u64 timestamp);
+        void PushLCD(GADDR addr, u64 timestamp, u8 val);
+        void PushOAM(GADDR addr, u64 timestamp, u8 val);
+        void PushVRAM(GADDR addr, u64 timestamp, u8 val);
         void Close();
         void Clear();
     };
@@ -85,15 +85,15 @@ private:
     std::array<Common::VirtualMemory::ReservedMappedSection, 2> vram_tags;
 
     u8 ReadOAM(GADDR addr, u64 timestamp);
-    void WriteOAM(GADDR addr, u8 val, u64 timestamp);
+    void WriteOAM(GADDR addr, u64 timestamp, u8 val);
 
-    static void VRAMWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void VRAMWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
     static u8 OAMReadHandler(Bus& bus, GADDR addr, u64 timestamp);
-    static void OAMWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void OAMWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
     static u8 LCDReadHandler(Bus& bus, GADDR addr, u64 timestamp);
-    static void LCDWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void LCDWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
 public:
     PPU(std::unique_ptr<Renderer> renderer);

@@ -31,9 +31,9 @@ class MBC5 : public SpecializedCartridge {
 
     std::filesystem::path ram_file_path;
 
-    static void RamEnableHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
-    static void RomBankNumberHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
-    static void RamBankNumberHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void RamEnableHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
+    static void RomBankNumberHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
+    static void RamBankNumberHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
 public:
     explicit MBC5(CartridgeHeader&& unspecialized);

@@ -13,7 +13,7 @@ u8 Bus::ReadNop(Bus&, GADDR addr, u64 timestamp) {
     LOG(Trace, "Unmapped memory read {:#06X} on cycle {}", addr, timestamp);
     return static_cast<u8>(~0);
 }
-void Bus::WriteNop(Bus&, GADDR addr, u8 val, u64 timestamp) {
+void Bus::WriteNop(Bus&, GADDR addr, u64 timestamp, u8 val) {
     LOG(Trace, "Unmapped memory write {:#06X} = {:#04X} on cycle {}", addr, val, timestamp);
 }
 
@@ -28,7 +28,7 @@ Bus::Bus(std::unique_ptr<CartridgeHeader> _cartridge, CPU::MainCPU _cpu, std::un
         [](Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp) -> u8 {
             return bus.Memory()[addr - PAGE_SIZE * 2];
         },
-        [](Bus& bus, GADDR addr, u8 val, [[maybe_unused]] u64 timestamp) {
+        [](Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp, u8 val) {
             bus.Memory()[addr - PAGE_SIZE * 2] = val;
         });
     {

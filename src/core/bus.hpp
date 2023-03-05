@@ -32,7 +32,7 @@ class Bus {
 
 public:
     using ReadHandler = u8 (*)(Bus&, GADDR, u64);
-    using WriteHandler = void (*)(Bus&, GADDR, u8, u64);
+    using WriteHandler = void (*)(Bus&, GADDR, u64, u8);
     static constexpr usize ADDRESS_SPACE = 0x10000;
     static constexpr usize PAGE_SIZE = 0x1000;
 
@@ -42,7 +42,7 @@ private:
     };
 
     static u8 ReadNop(Bus& bus, GADDR addr, u64 timestamp);
-    static void WriteNop(Bus& bus, GADDR addr, u8 val, u64 timestamp);
+    static void WriteNop(Bus& bus, GADDR addr, u64 timestamp, u8 val);
 
     std::array<ReadHandler, 1 << 6> read_handlers{ReadNop};
     std::array<WriteHandler, 1 << 6> write_handlers{WriteNop};
@@ -86,14 +86,15 @@ public:
 
     void SwitchWRAMBank(u8 index);
 
-    u8 Read(u64 timestamp, GADDR addr) {
+    u8 Read(GADDR addr, u64 timestamp) {
         auto tag = Tags()[addr];
         if (tag.read) [[unlikely]] return read_handlers[tag.handler](*this, addr, timestamp);
         return Memory()[addr];
     }
-    void Write(u64 timestamp, GADDR addr, u8 val) {
+    void Write(GADDR addr, u64 timestamp, u8 val) {
         auto tag = Tags()[addr];
-        if (tag.write) [[unlikely]] return write_handlers[tag.handler](*this, addr, val, timestamp);
+        if (tag.write) [[unlikely]]
+            return write_handlers[tag.handler](*this, addr, timestamp, val);
         Memory()[addr] = val;
     }
     void AttachIOHandler(u8 idx, MemoryTag tag) { Tags()[0xFF00 + idx] = tag; }

@@ -20,8 +20,8 @@ CartridgeHeader::CartridgeHeader(std::filesystem::path _path) : rom_file_path{st
 CartridgeHeader::~CartridgeHeader() {}
 
 u8 CartridgeHeader::RomBanks() const {
-    if (RomSizeCode() <= 0x08) return 2 << RomSizeCode();
-    if (RomSizeCode() >= 0x52 && RomSizeCode() <= 0x54) return 64 + (2 << (RomSizeCode() - 50));
+    if (RomSizeCode() <= 0x08) return static_cast<u8>(2 << RomSizeCode());
+    if (RomSizeCode() >= 0x52 && RomSizeCode() <= 0x54) return static_cast<u8>(64 + (2 << (RomSizeCode() - 50)));
     LOG(Error, "Unknown Rom Size Code {}", RomSizeCode());
     return 0;
 }
@@ -29,7 +29,7 @@ u8 CartridgeHeader::RomBanks() const {
 usize CartridgeHeader::RamSize() const {
     // TODO: add exception for MBC2
     if (RamSizeCode() == 0) return 0;
-    if (RamSizeCode() <= 4) return (2 * 1024) << ((RamSizeCode() - 1) * 2);
+    if (RamSizeCode() <= 4) return static_cast<usize>(2 * 1024) << ((RamSizeCode() - 1) * 2);
     if (RamSizeCode() == 5) return 64 * 1024;
     LOG(Error, "Unknown Ram Size Code {}", RamSizeCode());
     return 0;

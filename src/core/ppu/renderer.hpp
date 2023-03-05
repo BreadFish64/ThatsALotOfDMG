@@ -89,7 +89,7 @@ private:
         Presenter(std::unique_ptr<VulkanFrontend> frontend);
         ~Presenter();
 
-        Frame& GetCurrentFrame() { return frames[current_frame - 1]; }
+        Frame& GetCurrentFrame() { return frames[static_cast<usize>(current_frame - 1)]; }
         void PushFrame() {
             auto pending = pending_frame.exchange(current_frame);
             current_frame = pending < 0 ? -pending : pending;
@@ -104,7 +104,7 @@ private:
     std::counting_semaphore<FRAME_QUEUE_SIZE> frames_queued;
     std::counting_semaphore<FRAME_QUEUE_SIZE> frames_free;
 
-    //bool skip_frames = false;
+    // bool skip_frames = false;
     std::atomic<bool> stop{false};
     std::thread render_thread;
 
@@ -118,7 +118,8 @@ private:
         /*alignas(__m256i) static constexpr std::array<u32, 4> pallet_rgba{0xFF'FF'FF'FFu,
            0xFF'AA'AA'AAu, 0xFF'53'53'53u, 0xFF'00'00'00u};*/
         auto palette_vec =
-            _mm_set_epi32(0xFF'FF'FF'FFu, 0xFF'AA'AA'AAu, 0xFF'53'53'53u, 0xFF'00'00'00u);
+            _mm_set_epi32(std::bit_cast<int>(0xFF'FF'FF'FF), std::bit_cast<int>(0xFF'AA'AA'AA),
+                          std::bit_cast<int>(0xFF'53'53'53), std::bit_cast<int>(0xFF'00'00'00));
         auto permutation = _mm_and_si128(
             _mm_srlv_epi32(_mm_set1_epi32(reg), _mm_set_epi32(0, 2, 4, 6)), _mm_set1_epi32(0b11));
         return _mm256_extracti128_si256(
@@ -136,11 +137,10 @@ private:
         if (!(lcd.control & 0x10) && index < 0x80) offset += 0x1000;
         return offset;
     }
-    usize GetSpriteTileOffset(unsigned index) { return index * 16_sz;
-    }
+    usize GetSpriteTileOffset(unsigned index) { return index * 16_sz; }
     __m256i GetTileRow(usize tile_offset, unsigned row);
-    void RenderBGSpriteRow(u32* color_buffer, s32* priority_buffer,
-                           usize tile_vram_offset, unsigned row, __m256i palette);
+    void RenderBGSpriteRow(u32* color_buffer, s32* priority_buffer, usize tile_vram_offset,
+                           unsigned row, __m256i palette);
 };
 
 } // namespace CGB::Core

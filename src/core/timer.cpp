@@ -14,7 +14,7 @@ u8 Timer::TimerReadHandler(Bus& bus, GADDR addr, u64 timestamp) {
     }
 }
 
-void Timer::TimerWriteHandler(Bus& bus, GADDR addr, u8 val, u64 timestamp) {
+void Timer::TimerWriteHandler(Bus& bus, GADDR addr, u64 timestamp, u8 val) {
     auto timer = bus.GetTimer();
     switch (addr) {
     case 0xFF04: timer.last_reset = timestamp; break;

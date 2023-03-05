@@ -57,7 +57,8 @@ void Renderer::RenderFrame(PPU::FrameWrites& frame_writes) {
             int sprite_count = 0;
             for (const auto& object : oam) {
                 // TODO: support 16 line sprites
-                signed tile_y = scanline - object.ypos + 16;
+                signed tile_y =
+                    static_cast<signed>(scanline) - static_cast<signed>(object.ypos) + 16;
                 unsigned tile_number = object.tile;
                 if (lcd.UseLargeObjects()) {
                     tile_number &= ~1u;
@@ -73,7 +74,7 @@ void Renderer::RenderFrame(PPU::FrameWrites& frame_writes) {
                 }
                 ++sprite_count;
 
-                auto pallet_index_row = GetTileRow(GetSpriteTileOffset(tile_number), tile_y);
+                auto pallet_index_row = GetTileRow(GetSpriteTileOffset(tile_number), static_cast<unsigned>(tile_y));
                 if (object.XFlip()) {
                     pallet_index_row = _mm256_permutevar8x32_epi32(pallet_index_row, reverse);
                 }
@@ -387,7 +388,7 @@ void Renderer::Presenter::Present() {
             dst_barrier.srcAccessMask = {};
             dst_barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
 
-            src_barrier.image = *staging_images[presenting_frame - 1];
+            src_barrier.image = *staging_images[static_cast<usize>(presenting_frame - 1)];
             src_barrier.oldLayout = vk::ImageLayout::eGeneral;
             src_barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
             src_barrier.srcAccessMask = {};
@@ -407,7 +408,7 @@ void Renderer::Presenter::Present() {
             cmd->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
                                  vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, barriers);
 
-            cmd->blitImage(*staging_images[presenting_frame - 1],
+            cmd->blitImage(*staging_images[static_cast<usize>(presenting_frame - 1)],
                            vk::ImageLayout::eTransferSrcOptimal, present_image,
                            vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eNearest);
 
