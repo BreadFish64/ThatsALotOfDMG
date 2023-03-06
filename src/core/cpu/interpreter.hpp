@@ -153,12 +153,12 @@ namespace CGB::Core::CPU {
 
 class Interpreter;
 
-struct Assembler : Xbyak::CodeGenerator {
-    Interpreter& interpreter;
-
+class Assembler : Xbyak::CodeGenerator {
+public:
     Assembler(Interpreter& interpreter);
     ~Assembler();
 
+private:
     static constexpr Xbyak::Reg8 v_ret{Xbyak::Reg8::AL}; // 0
     // Keep these in argument registers for memory accesses
     static constexpr Xbyak::Reg64 v_bus{Xbyak::Reg64::RCX}; // 1
@@ -173,20 +173,22 @@ struct Assembler : Xbyak::CodeGenerator {
     static constexpr Xbyak::Reg64 v_timestamp{Xbyak::Reg64::R8}; // 8
     static constexpr Xbyak::Reg8 v_write_val{Xbyak::Reg8::R9B};  // 9
     // Use r8-r15 for 64-bit registers first since they already need the REX prefix anyway
-    static constexpr Xbyak::Reg64 v_pref_scratch1{Xbyak::Reg64::R10};
-    static constexpr Xbyak::Reg64 v_pref_scratch2{Xbyak::Reg64::R11};
+    static constexpr Xbyak::Reg64 v_pref_scratch1{Xbyak::Reg64::R10}; // 10
+    static constexpr Xbyak::Reg64 v_pref_scratch2{Xbyak::Reg64::R11}; // 11
     static constexpr Xbyak::Reg64 nv_interp{Xbyak::Reg64::R12};       // 12
     static constexpr Xbyak::Reg64 nv_mem{Xbyak::Reg64::R13};          // 13
     static constexpr Xbyak::Reg64 nv_jump_table{Xbyak::Reg64::R14};   // 14
-    static constexpr Xbyak::Reg64 nv_pref_scratch{Xbyak::Reg64::R15}; // 15
+    static constexpr Xbyak::Reg64 nv_log_ptr{Xbyak::Reg64::R15};      // 15
 
     static const inline std::array pushed_registers{
-        nv_pref_scratch.cvt64(),   nv_jump_table.cvt64(), nv_mem.cvt64(), nv_interp.cvt64(),
+        nv_log_ptr.cvt64(),        nv_jump_table.cvt64(), nv_mem.cvt64(), nv_interp.cvt64(),
         nv_unpref_scratch.cvt64(), nv_sp.cvt64(),         nv_pc.cvt64(),  nv_rhs.cvt64(),
     };
 
     static constexpr usize stack_home_offset = pushed_registers.size() * 8 // callee saved registers
                                                + 8;                        // return address
+
+    Interpreter& interpreter;
 
     Xbyak::Label prologue;
     Xbyak::Label epilogue;
@@ -197,20 +199,21 @@ struct Assembler : Xbyak::CodeGenerator {
     UNWIND_INFO unwind_info{};
     std::vector<RUNTIME_FUNCTION> debug_function_table;
 
-    void* allocateFromCodeSpace(usize alloc_size) {
-        if (size_ + alloc_size >= maxSize_) { throw Xbyak::Error(Xbyak::ERR_CODE_IS_TOO_BIG); }
+    // The elapsed t-cycles since the timestamp was last updated
+    u32 accumulated_timestamp{};
 
-        void* ret = getCurr<void*>();
-        size_ += alloc_size;
-        memset(ret, 0, alloc_size);
-        return ret;
-    }
+    void* allocateFromCodeSpace(usize alloc_size);
 
+    /// Generate the prologue to the dynamic interpreter's entry function
     void generatePrologue();
+    /// Generate the epilogue for exiting the dynamic interpreter
     void generateEpilogue();
 
     void beginOpcode(u8 opcode);
     void endOpcode(u8 opcode);
+
+    void Imm8();
+    void Imm16();
 
     void generateInterruptControl();
 };
@@ -221,7 +224,7 @@ using StaticMap =
                                     boost::container::static_vector<std::pair<Key, Val>, size>>;
 
 class Interpreter final : public BaseCPU {
-    friend struct Assembler;
+    friend class Assembler;
 
     static constexpr std::array<std::string_view, 8> R8_NAME{
         "B", "C", "D", "E", "H", "L", "[HL]", "A",
@@ -297,7 +300,7 @@ class Interpreter final : public BaseCPU {
     }
 
     u8 Imm8() {
-        u8 val = bus->Memory()[++PC];
+        u8 val = bus->Memory()[PC++];
         timestamp += 4;
         return val;
     }
@@ -412,7 +415,7 @@ class Interpreter final : public BaseCPU {
 
     void Jump(GADDR braddr) {
         timestamp += 4;
-        PC = braddr - 1;
+        PC = braddr;
     }
     void PushByte(u8 val) { Store(--SP, val); }
     void PushWord(u16 val) {
@@ -638,7 +641,7 @@ class Interpreter final : public BaseCPU {
         auto seconds =
             std::chrono::duration<double>{std::chrono::high_resolution_clock::now() - start};
 
-        LOG(Critical, "{:#06X} Unimplemented Opcode {:#010B}", PC, instruction);
+        LOG(Critical, "{:#06X} Unimplemented Opcode {:#010B}", PC - 1, instruction);
         LOG(Info, "Host time: {} Cycles: {} Speed: {}Hz", seconds, timestamp,
             static_cast<u64>(static_cast<double>(timestamp) / seconds.count()));
     }
@@ -678,12 +681,12 @@ class Interpreter final : public BaseCPU {
     void NOP([[maybe_unused]] u8 instruction) {}
     void JR_s8([[maybe_unused]] u8 instruction) {
         s8 offset = static_cast<s8>(Imm8());
-        Jump(static_cast<GADDR>(PC + 1 + offset));
+        Jump(static_cast<GADDR>(PC + offset));
     }
     template <u8 condition>
     void JR_cond_s8([[maybe_unused]] u8 instruction) {
         s8 offset = static_cast<s8>(Imm8());
-        if (CheckCondition<condition>()) { Jump(static_cast<GADDR>(PC + 1 + offset)); }
+        if (CheckCondition<condition>()) { Jump(static_cast<GADDR>(PC + offset)); }
     }
     template <u8 reg_idx>
     void LD_r16_u16([[maybe_unused]] u8 instruction) {
@@ -886,7 +889,7 @@ class Interpreter final : public BaseCPU {
     void CALL_cond_u16([[maybe_unused]] u8 instruction) {
         GADDR braddr = Imm16();
         if (CheckCondition<condition>()) {
-            PushWord(PC + 1);
+            PushWord(PC);
             Jump(braddr);
         };
     }
@@ -897,7 +900,7 @@ class Interpreter final : public BaseCPU {
     }
     void CALL_u16([[maybe_unused]] u8 instruction) {
         GADDR braddr = Imm16();
-        PushWord(PC + 1);
+        PushWord(PC);
         Jump(braddr);
     }
     template <u8 operation>
@@ -908,7 +911,7 @@ class Interpreter final : public BaseCPU {
     template <u8 vector>
     void RST([[maybe_unused]] u8 instruction) {
         u8 braddr = vector * 0x8;
-        PushWord(PC + 1);
+        PushWord(PC);
         Jump(braddr);
     }
 
@@ -916,6 +919,7 @@ class Interpreter final : public BaseCPU {
 
     template <void (Interpreter::*handler)(u8)>
     [[gnu::flatten]] static void TailCallInstr(Interpreter& state, u8 arg) {
+        *state.profile_log_ptr++ = arg;
         (state.*handler)(arg);
         if (state.timestamp < state.next_event_timestamp) [[likely]] {
             u8 opcode = state.Imm8();
@@ -981,6 +985,9 @@ class Interpreter final : public BaseCPU {
     std::atomic<std::chrono::nanoseconds> speed;
 
     std::unique_ptr<Assembler> assembler;
+
+    std::vector<u8> profile_log;
+    u8* profile_log_ptr;
 
 public:
     Interpreter();

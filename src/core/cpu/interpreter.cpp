@@ -10,6 +10,7 @@ using namespace Xbyak;
 
 Assembler::Assembler(Interpreter& interpreter)
     : Xbyak::CodeGenerator(DEFAULT_MAX_CODE_SIZE, Xbyak::AutoGrow), interpreter{interpreter} {
+
     generatePrologue();
     generateEpilogue();
 
@@ -24,6 +25,7 @@ Assembler::Assembler(Interpreter& interpreter)
     for (usize opcode_idx = 0; opcode_idx < opcode_labels.size(); ++opcode_idx) {
         if (!implemented_opcodes.test(opcode_idx)) { L(opcode_labels[opcode_idx]); }
     }
+    endbr64();
     int3();
 
     align();
@@ -53,6 +55,15 @@ Assembler::Assembler(Interpreter& interpreter)
 
 Assembler::~Assembler() { RtlDeleteFunctionTable(debug_function_table.data()); }
 
+void* Assembler::allocateFromCodeSpace(usize alloc_size) {
+    if (size_ + alloc_size >= maxSize_) { throw Xbyak::Error(Xbyak::ERR_CODE_IS_TOO_BIG); }
+
+    void* ret = getCurr<void*>();
+    size_ += alloc_size;
+    memset(ret, 0, alloc_size);
+    return ret;
+}
+
 void Assembler::generatePrologue() {
     align();
     L(prologue);
@@ -77,14 +88,16 @@ void Assembler::generatePrologue() {
         unwind_info.FrameOffset = 0;   // Unused because FrameRegister == 0
     }
     mov(nv_interp, Reg64{Reg64::RCX});
-    movzx(v_addr.cvt64(), Reg8{Reg8::DL});
+    movzx(v_addr.cvt32(), Reg8{Reg8::DL});
     mov(nv_jump_table, jump_table);
 
     mov(v_bus, qword[nv_interp + offsetof(Interpreter, bus)]);
     mov(nv_mem, qword[v_bus + offsetof(Bus, address_space_loc)]);
 
     mov(nv_pc, word[nv_interp + offsetof(Interpreter, PC)]);
+    mov(nv_sp, word[nv_interp + offsetof(Interpreter, SP)]);
     mov(v_timestamp, qword[nv_interp + offsetof(Interpreter, timestamp)]);
+    mov(nv_log_ptr, qword[nv_interp + offsetof(Interpreter, profile_log_ptr)]);
 
     jmp(qword[nv_jump_table + v_addr.cvt64() * 8]);
 }
@@ -93,7 +106,9 @@ void Assembler::generateEpilogue() {
     align();
     L(epilogue);
 
+    mov(qword[nv_interp + offsetof(Interpreter, profile_log_ptr)], nv_log_ptr);
     mov(qword[nv_interp + offsetof(Interpreter, timestamp)], v_timestamp);
+    mov(word[nv_interp + offsetof(Interpreter, SP)], nv_sp);
     mov(word[nv_interp + offsetof(Interpreter, PC)], nv_pc);
 
     for (auto reg : pushed_registers | std::ranges::views::reverse) { pop(reg); }
@@ -102,12 +117,30 @@ void Assembler::generateEpilogue() {
 }
 
 void Assembler::beginOpcode(u8 opcode) {
+    accumulated_timestamp = 0;
+
     align();
     implemented_opcodes.set(opcode);
     L(opcode_labels[opcode]);
     endbr64();
+    mov(byte[nv_log_ptr], v_addr.cvt8());
+    inc(nv_log_ptr);
 }
-void Assembler::endOpcode([[maybe_unused]] u8 opcode) { jmp(epilogue); }
+void Assembler::endOpcode([[maybe_unused]] u8 opcode) {
+    if (accumulated_timestamp) { add(v_timestamp, accumulated_timestamp); }
+    jmp(epilogue);
+}
+
+void Assembler::Imm8() {
+    mov(nv_rhs.cvt8(), byte[nv_mem + nv_pc.cvt64()]);
+    inc(nv_pc);
+    accumulated_timestamp += 4;
+}
+void Assembler::Imm16() {
+    mov(nv_rhs.cvt16(), byte[nv_mem + nv_pc.cvt64()]);
+    add(nv_pc, 2);
+    accumulated_timestamp += 8;
+}
 
 void Assembler::generateInterruptControl() {
     for (u8 variant : {u8{0b11'110'011}, u8{0b11'111'011}}) {
@@ -146,7 +179,7 @@ Interpreter::Interpreter() {
     r8.A = 0x01;
     r8.F = 0;
 
-    assembler = std::make_unique<Assembler>(*this);
+    // assembler = std::make_unique<Assembler>(*this);
 }
 
 void Interpreter::Install(Bus& _bus) {
@@ -159,8 +192,13 @@ void Interpreter::Install(Bus& _bus) {
 }
 
 void Interpreter::Run() {
-    PC = 0xFF;
+    PC = 0x100;
     timestamp = 0;
+
+    // TODO: something with this log data
+    profile_log = std::vector<u8>(PPU::FRAME_CYCLES / 4);
+    profile_log_ptr = profile_log.data();
+
     start = std::chrono::high_resolution_clock::now();
     auto prev_frame = start;
     schedule.emplace(PPU::HEIGHT * PPU::SCANLINE_CYCLES, Event::VBlank);
@@ -168,7 +206,7 @@ void Interpreter::Run() {
                      Event::LCD_STAT_LYC_IS_LY);
     UpdateNextEvent();
     while (true) {
-        if (timestamp < schedule.begin()->first) [[likely]] {
+        if (timestamp < next_event_timestamp) [[likely]] {
             u8 opcode = Imm8();
             JUMP_TABLE[opcode](*this, opcode);
         }
@@ -181,11 +219,14 @@ void Interpreter::Run() {
             speed = (end_frame - prev_frame);
             prev_frame = end_frame;
 
+            // LOG(Debug, "Ran {} instructions this frame", profile_log_ptr - profile_log.data());
+            profile_log_ptr = profile_log.data();
+
             bus->GetPPU().VBlank(timestamp);
             if (IME && (interrupt_enable & (1 << 0))) {
                 timestamp += 8;
                 IME = false;
-                PushWord(PC + 1);
+                PushWord(PC);
                 timestamp += 4;
                 Jump(0x40);
             }
@@ -196,7 +237,7 @@ void Interpreter::Run() {
                 bus->GetPPU().GetLcdRegs().stat & (1 << 6)) {
                 timestamp += 8;
                 IME = false;
-                PushWord(PC + 1);
+                PushWord(PC);
                 timestamp += 4;
                 Jump(0x48);
             }
