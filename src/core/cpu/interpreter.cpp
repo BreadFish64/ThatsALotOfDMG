@@ -18,6 +18,27 @@ Assembler::Assembler(Interpreter& interpreter)
     L(jump_table);
     for (const auto& opcode : opcode_labels) { putL(opcode); }
 
+    // NOP
+    {
+        beginOpcode(0b00000000);
+        endOpcode();
+    }
+    // JR_s8
+    {
+        beginOpcode(0b00011000);
+        movsx(nv_rhs16, Imm8());
+        inc(nv_pc);
+        add(nv_pc, nv_rhs16);
+        accumulated_timestamp += 4;
+        endOpcode();
+    }
+    // JP_u16
+    {
+        beginOpcode(0b11'000'011);
+        mov(nv_pc, Imm16());
+        accumulated_timestamp += 4;
+        endOpcode();
+    }
     generateInterruptControl();
 
     // Deal with undefined labels
@@ -26,7 +47,10 @@ Assembler::Assembler(Interpreter& interpreter)
         if (!implemented_opcodes.test(opcode_idx)) { L(opcode_labels[opcode_idx]); }
     }
     endbr64();
-    int3();
+    // Rollback last opcode fetch
+    sub(v_timestamp, 4);
+    dec(nv_pc);
+    jmp(epilogue);
 
     align();
     const auto embedded_unwind_info_pos = static_cast<DWORD>(getSize());
@@ -94,8 +118,8 @@ void Assembler::generatePrologue() {
     mov(v_bus, qword[nv_interp + offsetof(Interpreter, bus)]);
     mov(nv_mem, qword[v_bus + offsetof(Bus, address_space_loc)]);
 
-    mov(nv_pc, word[nv_interp + offsetof(Interpreter, PC)]);
-    mov(nv_sp, word[nv_interp + offsetof(Interpreter, SP)]);
+    movzx(nv_pc.cvt32(), word[nv_interp + offsetof(Interpreter, PC)]);
+    movzx(nv_sp.cvt32(), word[nv_interp + offsetof(Interpreter, SP)]);
     mov(v_timestamp, qword[nv_interp + offsetof(Interpreter, timestamp)]);
     mov(nv_log_ptr, qword[nv_interp + offsetof(Interpreter, profile_log_ptr)]);
 
@@ -118,7 +142,7 @@ void Assembler::generateEpilogue() {
 
 void Assembler::beginOpcode(u8 opcode) {
     accumulated_timestamp = 0;
-
+    current_opcode = opcode;
     align();
     implemented_opcodes.set(opcode);
     L(opcode_labels[opcode]);
@@ -126,20 +150,17 @@ void Assembler::beginOpcode(u8 opcode) {
     mov(byte[nv_log_ptr], v_addr.cvt8());
     inc(nv_log_ptr);
 }
-void Assembler::endOpcode([[maybe_unused]] u8 opcode) {
+void Assembler::endOpcode() {
+    Label exit;
     if (accumulated_timestamp) { add(v_timestamp, accumulated_timestamp); }
-    jmp(epilogue);
-}
+    cmp(v_timestamp, qword[nv_interp + offsetof(Interpreter, next_event_timestamp)]);
+    jae(epilogue);
 
-void Assembler::Imm8() {
-    mov(nv_rhs.cvt8(), byte[nv_mem + nv_pc.cvt64()]);
+    movzx(v_addr.cvt32(), byte[nv_mem + nv_pc.cvt64()]);
+    mov(v_jump_target, qword[nv_jump_table + v_addr.cvt64() * 8]);
     inc(nv_pc);
-    accumulated_timestamp += 4;
-}
-void Assembler::Imm16() {
-    mov(nv_rhs.cvt16(), byte[nv_mem + nv_pc.cvt64()]);
-    add(nv_pc, 2);
-    accumulated_timestamp += 8;
+    add(v_timestamp, 4);
+    jmp(v_jump_target);
 }
 
 void Assembler::generateInterruptControl() {
@@ -147,7 +168,7 @@ void Assembler::generateInterruptControl() {
         beginOpcode(variant);
         bool enable_interrupts = variant & 0b00'001'000;
         mov(byte[nv_interp + offsetof(Interpreter, IME)], enable_interrupts);
-        endOpcode(variant);
+        endOpcode();
     }
 }
 
@@ -179,7 +200,7 @@ Interpreter::Interpreter() {
     r8.A = 0x01;
     r8.F = 0;
 
-    // assembler = std::make_unique<Assembler>(*this);
+    assembler = std::make_unique<Assembler>(*this);
 }
 
 void Interpreter::Install(Bus& _bus) {
@@ -206,7 +227,7 @@ void Interpreter::Run() {
                      Event::LCD_STAT_LYC_IS_LY);
     UpdateNextEvent();
     while (true) {
-        if (timestamp < next_event_timestamp) [[likely]] {
+        while (timestamp < next_event_timestamp) [[likely]] {
             u8 opcode = Imm8();
             JUMP_TABLE[opcode](*this, opcode);
         }

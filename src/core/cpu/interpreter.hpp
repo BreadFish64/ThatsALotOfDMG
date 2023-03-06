@@ -159,12 +159,14 @@ public:
     ~Assembler();
 
 private:
-    static constexpr Xbyak::Reg8 v_ret{Xbyak::Reg8::AL}; // 0
+    static constexpr Xbyak::Reg8 v_ret8{Xbyak::Reg8::AL};           // 0
+    static constexpr Xbyak::Reg64 v_jump_target{Xbyak::Reg64::RAX}; // 0
     // Keep these in argument registers for memory accesses
     static constexpr Xbyak::Reg64 v_bus{Xbyak::Reg64::RCX}; // 1
     static constexpr Xbyak::Reg16 v_addr{Xbyak::Reg16::DX}; // 2
 
-    static constexpr Xbyak::Reg16 nv_rhs{Xbyak::Reg16::BL};            // 3
+    static constexpr Xbyak::Reg8 nv_rhs8{Xbyak::Reg8::BL};             // 3
+    static constexpr Xbyak::Reg16 nv_rhs16{Xbyak::Reg16::BX};          // 3
     static constexpr Xbyak::Reg64 stack_pointer{Xbyak::Reg64::RSP};    // 4
     static constexpr Xbyak::Reg16 nv_pc{Xbyak::Reg16::BP};             // 5
     static constexpr Xbyak::Reg16 nv_sp{Xbyak::Reg16::SI};             // 6
@@ -182,7 +184,7 @@ private:
 
     static const inline std::array pushed_registers{
         nv_log_ptr.cvt64(),        nv_jump_table.cvt64(), nv_mem.cvt64(), nv_interp.cvt64(),
-        nv_unpref_scratch.cvt64(), nv_sp.cvt64(),         nv_pc.cvt64(),  nv_rhs.cvt64(),
+        nv_unpref_scratch.cvt64(), nv_sp.cvt64(),         nv_pc.cvt64(),  nv_rhs16.cvt64(),
     };
 
     static constexpr usize stack_home_offset = pushed_registers.size() * 8 // callee saved registers
@@ -201,6 +203,7 @@ private:
 
     // The elapsed t-cycles since the timestamp was last updated
     u32 accumulated_timestamp{};
+    u8 current_opcode{};
 
     void* allocateFromCodeSpace(usize alloc_size);
 
@@ -210,10 +213,16 @@ private:
     void generateEpilogue();
 
     void beginOpcode(u8 opcode);
-    void endOpcode(u8 opcode);
+    void endOpcode();
 
-    void Imm8();
-    void Imm16();
+    auto Imm8() {
+        accumulated_timestamp += 4;
+        return byte[nv_mem + nv_pc.cvt64()];
+    }
+    auto Imm16() {
+        accumulated_timestamp += 8;
+        return word[nv_mem + nv_pc.cvt64()];
+    }
 
     void generateInterruptControl();
 };
