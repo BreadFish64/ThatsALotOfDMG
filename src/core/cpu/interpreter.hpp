@@ -159,38 +159,34 @@ struct Assembler : Xbyak::CodeGenerator {
     Assembler(Interpreter& interpreter);
     ~Assembler();
 
-    static constexpr auto v_ret = Xbyak::Reg8{Xbyak::Reg8::AL};
-    static constexpr auto nv_sp = Xbyak::Reg64{Xbyak::Reg64::RSP};
-
+    static constexpr Xbyak::Reg8 v_ret{Xbyak::Reg8::AL}; // 0
     // Keep these in argument registers for memory accesses
-    static constexpr auto v_bus = Xbyak::Reg64{Xbyak::Reg64::RCX};
-    static constexpr auto v_addr = Xbyak::Reg16{Xbyak::Reg16::DX};
-    static constexpr auto v_timestamp = Xbyak::Reg64{Xbyak::Reg64::R8};
-    static constexpr auto v_write_val = Xbyak::Reg8{Xbyak::Reg8::R9B};
+    static constexpr Xbyak::Reg64 v_bus{Xbyak::Reg64::RCX}; // 1
+    static constexpr Xbyak::Reg16 v_addr{Xbyak::Reg16::DX}; // 2
 
-    // Use r8-r15 for 64-bit registers first since they already need the REX prefix
-    static constexpr auto nv_jump_table = Xbyak::Reg64{Xbyak::Reg64::R14};
-    static constexpr auto nv_mem = Xbyak::Reg64{Xbyak::Reg64::R13};
-    static constexpr auto nv_interp = Xbyak::Reg64{Xbyak::Reg64::R12};
-    static constexpr auto nv_pc = Xbyak::Reg16{Xbyak::Reg16::BP};
-    static constexpr auto nv_rhs = Xbyak::Reg8{Xbyak::Reg8::BL};
+    static constexpr Xbyak::Reg16 nv_rhs{Xbyak::Reg16::BL};            // 3
+    static constexpr Xbyak::Reg64 stack_pointer{Xbyak::Reg64::RSP};    // 4
+    static constexpr Xbyak::Reg16 nv_pc{Xbyak::Reg16::BP};             // 5
+    static constexpr Xbyak::Reg16 nv_sp{Xbyak::Reg16::SI};             // 6
+    static constexpr Xbyak::Reg16 nv_unpref_scratch{Xbyak::Reg16::DI}; // 7
+    // Keep these in argument registers for memory accesses
+    static constexpr Xbyak::Reg64 v_timestamp{Xbyak::Reg64::R8}; // 8
+    static constexpr Xbyak::Reg8 v_write_val{Xbyak::Reg8::R9B};  // 9
+    // Use r8-r15 for 64-bit registers first since they already need the REX prefix anyway
+    static constexpr Xbyak::Reg64 v_pref_scratch1{Xbyak::Reg64::R10};
+    static constexpr Xbyak::Reg64 v_pref_scratch2{Xbyak::Reg64::R11};
+    static constexpr Xbyak::Reg64 nv_interp{Xbyak::Reg64::R12};       // 12
+    static constexpr Xbyak::Reg64 nv_mem{Xbyak::Reg64::R13};          // 13
+    static constexpr Xbyak::Reg64 nv_jump_table{Xbyak::Reg64::R14};   // 14
+    static constexpr Xbyak::Reg64 nv_pref_scratch{Xbyak::Reg64::R15}; // 15
 
     static const inline std::array pushed_registers{
-        nv_jump_table.cvt64(),
-        nv_mem.cvt64(),
-        nv_interp.cvt64(),
-        nv_pc.cvt64(),
-        nv_rhs.cvt64(),
+        nv_pref_scratch.cvt64(),   nv_jump_table.cvt64(), nv_mem.cvt64(), nv_interp.cvt64(),
+        nv_unpref_scratch.cvt64(), nv_sp.cvt64(),         nv_pc.cvt64(),  nv_rhs.cvt64(),
     };
 
-    static constexpr std::array nv_unpref_scratch{
-        Xbyak::Reg8{Xbyak::Reg8::DI},
-        Xbyak::Reg8{Xbyak::Reg8::SI},
-    };
-
-    static constexpr std::array nv_pref_scratch{
-        Xbyak::Reg8{Xbyak::Reg8::R15},
-    };
+    static constexpr usize stack_home_offset = pushed_registers.size() * 8 // callee saved registers
+                                               + 8;                        // return address
 
     Xbyak::Label prologue;
     Xbyak::Label epilogue;
