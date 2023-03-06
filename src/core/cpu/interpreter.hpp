@@ -10,6 +10,7 @@
 
 #include <Windows.h>
 
+#include <bitset>
 #include <chrono>
 
 // These macros were a mistake and I'm sorry to anyone trying to understand them
@@ -168,12 +169,14 @@ struct Assembler : Xbyak::CodeGenerator {
     static constexpr auto v_write_val = Xbyak::Reg8{Xbyak::Reg8::R9B};
 
     // Use r8-r15 for 64-bit registers first since they already need the REX prefix
+    static constexpr auto nv_jump_table = Xbyak::Reg64{Xbyak::Reg64::R14};
     static constexpr auto nv_mem = Xbyak::Reg64{Xbyak::Reg64::R13};
     static constexpr auto nv_interp = Xbyak::Reg64{Xbyak::Reg64::R12};
     static constexpr auto nv_pc = Xbyak::Reg16{Xbyak::Reg16::BP};
     static constexpr auto nv_rhs = Xbyak::Reg8{Xbyak::Reg8::BL};
 
     static const inline std::array pushed_registers{
+        nv_jump_table.cvt64(),
         nv_mem.cvt64(),
         nv_interp.cvt64(),
         nv_pc.cvt64(),
@@ -186,12 +189,14 @@ struct Assembler : Xbyak::CodeGenerator {
     };
 
     static constexpr std::array nv_pref_scratch{
-        Xbyak::Reg8{Xbyak::Reg8::R14},
         Xbyak::Reg8{Xbyak::Reg8::R15},
     };
 
-    void (*prologue)(Interpreter&, u8);
+    Xbyak::Label prologue;
     Xbyak::Label epilogue;
+    Xbyak::Label jump_table;
+    std::bitset<256> implemented_opcodes{};
+    std::array<Xbyak::Label, 256> opcode_labels;
 
     UNWIND_INFO unwind_info{};
     std::vector<RUNTIME_FUNCTION> debug_function_table;
@@ -679,8 +684,7 @@ class Interpreter final : public BaseCPU {
     template <u8 condition>
     void JR_cond_s8([[maybe_unused]] u8 instruction) {
         s8 offset = static_cast<s8>(Imm8());
-        if (CheckCondition<condition>()) { Jump(static_cast<GADDR>(PC + 1 + offset));
-        }
+        if (CheckCondition<condition>()) { Jump(static_cast<GADDR>(PC + 1 + offset)); }
     }
     template <u8 reg_idx>
     void LD_r16_u16([[maybe_unused]] u8 instruction) {
@@ -919,8 +923,6 @@ class Interpreter final : public BaseCPU {
             [[clang::musttail]] return state.JUMP_TABLE[opcode](state, opcode);
         }
     }
-
-    std::array<void*, 256> OPCODE_TABLE{};
 
     std::array<Opcode, 256> JUMP_TABLE = []() constexpr {
         std::array<Opcode, 256> table{};

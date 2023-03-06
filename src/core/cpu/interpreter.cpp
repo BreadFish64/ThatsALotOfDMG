@@ -8,18 +8,31 @@ namespace CGB::Core::CPU {
 
 using namespace Xbyak;
 
-Assembler::Assembler(Interpreter& interpreter) : interpreter{interpreter} {
+Assembler::Assembler(Interpreter& interpreter)
+    : Xbyak::CodeGenerator(DEFAULT_MAX_CODE_SIZE, Xbyak::AutoGrow), interpreter{interpreter} {
     generatePrologue();
     generateEpilogue();
 
+    align();
+    L(jump_table);
+    for (const auto& opcode : opcode_labels) { putL(opcode); }
+
     generateInterruptControl();
+
+    // Deal with undefined labels
+    align();
+    for (usize opcode_idx = 0; opcode_idx < opcode_labels.size(); ++opcode_idx) {
+        if (!implemented_opcodes.test(opcode_idx)) { L(opcode_labels[opcode_idx]); }
+    }
+    int3();
 
     align();
     const auto embedded_unwind_info_pos = static_cast<DWORD>(getSize());
     auto* const embedded_unwind_info =
         static_cast<UNWIND_INFO*>(allocateFromCodeSpace(sizeof(UNWIND_INFO)));
-    align();
     *embedded_unwind_info = unwind_info;
+
+    readyRE();
 
     debug_function_table.emplace_back(RUNTIME_FUNCTION{
         .BeginAddress = 0,
@@ -29,27 +42,32 @@ Assembler::Assembler(Interpreter& interpreter) : interpreter{interpreter} {
     RtlAddFunctionTable(debug_function_table.data(),
                         static_cast<DWORD>(debug_function_table.size()),
                         reinterpret_cast<DWORD64>(getCode()));
-    readyRE();
+
+    for (usize opcode_idx = 0; opcode_idx < opcode_labels.size(); ++opcode_idx) {
+        if (implemented_opcodes.test(opcode_idx)) {
+            interpreter.JUMP_TABLE[opcode_idx] =
+                std::bit_cast<Interpreter::Opcode>(prologue.getAddress());
+        }
+    }
 }
 
 Assembler::~Assembler() { RtlDeleteFunctionTable(debug_function_table.data()); }
 
 void Assembler::generatePrologue() {
     align();
-    prologue = getCurr<decltype(prologue)>();
-
+    L(prologue);
     {
-        const uint8_t* const begin_prologue = getCurr();
+        const size_t begin_prologue = getSize();
         auto unwind_code = unwind_info.UnwindCode.begin();
         for (auto reg : pushed_registers) {
-            unwind_code->code = {
-                .CodeOffset = static_cast<UBYTE>(getCurr() - begin_prologue),
+            (unwind_code++)->code = {
+                .CodeOffset = static_cast<UBYTE>(getSize()),
                 .UnwindOp = UWOP_PUSH_NONVOL,
                 .OpInfo = static_cast<UBYTE>(reg.getIdx()),
             };
             push(reg);
         }
-        const uint8_t* const end_prologue = getCurr();
+        const size_t end_prologue = getSize();
 
         unwind_info.Version = 1;
         unwind_info.Flags = 0;
@@ -58,9 +76,9 @@ void Assembler::generatePrologue() {
         unwind_info.FrameRegister = 0; // No frame register present
         unwind_info.FrameOffset = 0;   // Unused because FrameRegister == 0
     }
-
     mov(nv_interp, Reg64{Reg64::RCX});
     movzx(v_addr.cvt64(), Reg8{Reg8::DL});
+    mov(nv_jump_table, jump_table);
 
     mov(v_bus, qword[nv_interp + offsetof(Interpreter, bus)]);
     mov(nv_mem, qword[v_bus + offsetof(Bus, address_space_loc)]);
@@ -68,7 +86,7 @@ void Assembler::generatePrologue() {
     mov(nv_pc, word[nv_interp + offsetof(Interpreter, PC)]);
     mov(v_timestamp, qword[nv_interp + offsetof(Interpreter, timestamp)]);
 
-    jmp(qword[nv_interp + v_addr.cvt64() * 8 + offsetof(Interpreter, OPCODE_TABLE)]);
+    jmp(qword[nv_jump_table + v_addr.cvt64() * 8]);
 }
 
 void Assembler::generateEpilogue() {
@@ -85,9 +103,9 @@ void Assembler::generateEpilogue() {
 
 void Assembler::beginOpcode(u8 opcode) {
     align();
-    interpreter.OPCODE_TABLE[opcode] = getCurr<void*>();
-    interpreter.JUMP_TABLE[opcode] = prologue;
-    // TODO: control flow guard
+    implemented_opcodes.set(opcode);
+    L(opcode_labels[opcode]);
+    endbr64();
 }
 void Assembler::endOpcode([[maybe_unused]] u8 opcode) { jmp(epilogue); }
 
