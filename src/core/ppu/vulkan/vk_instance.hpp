@@ -13,7 +13,6 @@ namespace CGB::Vulkan {
 inline vk::DispatchLoaderDynamic& GetDefaultDispatcher();
 }
 
-#define NOMINMAX
 #define VULKAN_HPP_DEFAULT_DISPATCHER_TYPE ::vk::DispatchLoaderDynamic
 #define VULKAN_HPP_DEFAULT_DISPATCHER ::CGB::Vulkan::GetDefaultDispatcher()
 #include <vulkan/vulkan.hpp>

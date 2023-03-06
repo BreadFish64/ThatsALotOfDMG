@@ -120,12 +120,20 @@ void Assembler::generateInterruptControl() {
 
 void Interpreter::ScheduleEvent(u64 event_timestamp, Event event) {
     schedule.emplace(event_timestamp, event);
+    UpdateNextEvent();
 }
 void Interpreter::DescheduleEvent(Event event) {
     auto it = std::ranges::find_if(schedule, [event](decltype(schedule)::const_reference pair) {
         return pair.second == event;
     });
-    if (it != schedule.end()) { schedule.erase(it); }
+    if (it != schedule.end()) {
+        schedule.erase(it);
+        UpdateNextEvent();
+    }
+}
+void Interpreter::UpdateNextEvent() {
+    next_event_timestamp =
+        schedule.empty() ? std::numeric_limits<u64>::max() : schedule.cbegin()->first;
 }
 
 Interpreter::Interpreter() {
@@ -158,6 +166,7 @@ void Interpreter::Run() {
     schedule.emplace(PPU::HEIGHT * PPU::SCANLINE_CYCLES, Event::VBlank);
     schedule.emplace(bus->GetPPU().GetLcdRegs().lyc * PPU::SCANLINE_CYCLES,
                      Event::LCD_STAT_LYC_IS_LY);
+    UpdateNextEvent();
     while (true) {
         if (timestamp < schedule.begin()->first) [[likely]] {
             u8 opcode = Imm8();
@@ -165,6 +174,7 @@ void Interpreter::Run() {
         }
         auto [t, event] = std::move(*schedule.begin());
         schedule.erase(schedule.begin());
+        UpdateNextEvent();
         switch (event) {
         case Event::VBlank: {
             auto end_frame = std::chrono::high_resolution_clock::now();

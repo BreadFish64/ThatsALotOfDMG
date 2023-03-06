@@ -6,6 +6,7 @@ target_include_directories(${tgt} PRIVATE ${MAIN_SOURCE_DIR})
 
 if (MSVC)
     message(STATUS "Target ${tgt} config ${CMAKE_BUILD_TYPE}")
+    target_compile_definitions(${tgt} PRIVATE NOMINMAX)
     target_compile_options(${tgt} PRIVATE /W4 /WX)
     target_compile_options(${tgt} PRIVATE /Fa)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")

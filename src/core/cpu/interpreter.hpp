@@ -604,6 +604,7 @@ class Interpreter final : public BaseCPU {
     u8 interrupt_enable{0};
     u8 interrupt_flags{0};
 
+    u64 next_event_timestamp = std::numeric_limits<u64>::max();
     StaticMap<u64, Event, 8> schedule;
 
     static u8 InterruptRegReadHandler(Bus& bus, GADDR addr, [[maybe_unused]] u64 timestamp) {
@@ -627,6 +628,8 @@ class Interpreter final : public BaseCPU {
 
     virtual void ScheduleEvent(u64 event_timestamp, Event event) override;
     virtual void DescheduleEvent(Event event) override;
+
+    void UpdateNextEvent();
 
     std::chrono::high_resolution_clock::time_point start;
 
@@ -792,7 +795,7 @@ class Interpreter final : public BaseCPU {
         u8 val = ReadR8<src_idx>();
         WriteR8<dst_idx>(val);
     }
-    void HALT([[maybe_unused]] u8 instruction) { timestamp = schedule.begin()->first; }
+    void HALT([[maybe_unused]] u8 instruction) { timestamp = next_event_timestamp; }
     template <u8 operation, u8 reg_idx>
     void ALU_A_r8([[maybe_unused]] u8 instruction) {
         u8 rhs = ReadR8<reg_idx>();
@@ -914,7 +917,7 @@ class Interpreter final : public BaseCPU {
     template <void (Interpreter::*handler)(u8)>
     [[gnu::flatten]] static void TailCallInstr(Interpreter& state, u8 arg) {
         (state.*handler)(arg);
-        if (state.timestamp < state.schedule.begin()->first) [[likely]] {
+        if (state.timestamp < state.next_event_timestamp) [[likely]] {
             u8 opcode = state.Imm8();
             [[clang::musttail]] return state.JUMP_TABLE[opcode](state, opcode);
         }
